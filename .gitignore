@@ -10,3 +10,6 @@ outputs/*after*
 outputs/*.zip
 outputs/sycm-latest-verification.json
 outputs/*analysis*.md
+outputs/sycm-item-rank-export.*
+outputs/sycm-item-rank-current-rows.json
+outputs/sycm-item-rank-api-scan.md
