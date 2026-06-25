@@ -9,3 +9,4 @@ outputs/*before*
 outputs/*after*
 outputs/*.zip
 outputs/sycm-latest-verification.json
+outputs/*analysis*.md
