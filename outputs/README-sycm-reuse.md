@@ -2,7 +2,7 @@
 
 ## 1. 先准备登录态和补丁
 
-在当前 Edge 已登录生意参谰的前提下，先运行：
+在当前 Edge 已登录生意参谋的前提下，先运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\sycm-minimal-fix.ps1
