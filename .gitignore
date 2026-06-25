@@ -1,0 +1,11 @@
+﻿# Keep local browser/session diagnostics out of GitHub
+.playwright-cli/
+work/
+outputs/*debug*
+outputs/*requests*
+outputs/*console*
+outputs/*diagnostics*
+outputs/*before*
+outputs/*after*
+outputs/*.zip
+outputs/sycm-latest-verification.json
