@@ -1,125 +1,301 @@
 async page => {
-  return await page.evaluate(async () => {
-    const cfg = JSON.parse(sessionStorage.getItem('__sycm_export_cfg') || '{}');
-    const endpointPath = '/cc/item/live/view/top.json';
+  const endpointPath = '/cc/item/live/view/top.json';
+  const cfg = await page.evaluate(() => JSON.parse(sessionStorage.getItem('__sycm_export_cfg') || '{}')).catch(() => ({}));
 
-    function getToken() {
-      try {
-        const urls = performance.getEntriesByType('resource').map(e => e.name).reverse();
-        for (const u of urls) {
-          if (u.includes('sycm.taobao.com/') && u.includes('token=')) {
-            const token = new URL(u, location.href).searchParams.get('token');
-            if (token) return token;
-          }
-        }
-      } catch (_) {}
-      return '';
-    }
+  function valueOf(v) {
+    if (v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v, 'value')) return v.value;
+    return v ?? '';
+  }
 
-    function parseCacheValue(raw) {
-      let outer;
-      try { outer = JSON.parse(raw); } catch (_) { outer = raw; }
-      if (typeof outer !== 'string') return null;
-      const pipe = outer.indexOf('|');
-      if (pipe < 0) return null;
-      const obj = JSON.parse(outer.slice(pipe + 1));
-      return obj && obj.value ? obj.value : null;
-    }
+  function rowsOf(payload) {
+    if (!payload || typeof payload !== 'object') return [];
+    const candidates = [
+      payload && payload._d && payload._d.data && payload._d.data.data,
+      payload && payload._d && payload._d.data,
+      payload && payload.data && payload.data.data,
+      payload && payload.data,
+      payload && payload.list,
+      payload && payload.result
+    ];
+    for (const value of candidates) if (Array.isArray(value)) return value;
+    return [];
+  }
 
-    function readLocalCache() {
-      const dateRange = cfg.dateRange || '';
-      const dateType = cfg.dateType || '';
-      const page = String(cfg.page || 1);
-      const pageSize = String(cfg.pageSize || 10);
-      const keys = Object.keys(localStorage)
-        .filter(k => k.includes(endpointPath))
-        .sort((a, b) => {
-          const score = k =>
-            (dateRange && k.includes('dateRange=' + dateRange) ? 8 : 0) +
-            (dateType && k.includes('dateType=' + dateType) ? 4 : 0) +
-            (k.includes('page=' + page) ? 2 : 0) +
-            (k.includes('pageSize=' + pageSize) ? 1 : 0);
-          return score(b) - score(a);
-        });
-      for (const key of keys) {
-        try {
-          const val = parseCacheValue(localStorage.getItem(key));
-          const rows = val && val._d && val._d.data && val._d.data.data;
-          if (Array.isArray(rows) && rows.length) return { key, value: val };
-        } catch (_) {}
-      }
+  function dataOf(payload) {
+    if (!payload || typeof payload !== 'object') return {};
+    if (payload._d && payload._d.data && !Array.isArray(payload._d.data)) return payload._d.data;
+    if (payload._d && Array.isArray(payload._d.data)) return payload._d;
+    if (payload.data && !Array.isArray(payload.data)) return payload.data;
+    return payload;
+  }
+
+  function isRiskText(text) {
+    const s = String(text || '');
+    return (s.includes('rgv587_flag') && s.includes('punish')) ||
+      s.includes('bixi.alicdn.com/punish') ||
+      s.includes('punish:resource:template') ||
+      s.includes('bxpunish') ||
+      s.includes('punishURL') ||
+      s.includes('baxia') ||
+      s.includes('压力山大') ||
+      s.includes('稍后再试');
+  }
+
+  function hasRiskHeaders(headers) {
+    const h = headers || {};
+    const joined = Object.keys(h).map(k => k + ':' + h[k]).join('\n').toLowerCase();
+    return joined.includes('bxpunish') || joined.includes('bixi.alicdn.com/punish') || joined.includes('punish');
+  }
+
+  function parsePayload(text, headers) {
+    if (!text || isRiskText(text) || hasRiskHeaders(headers)) return null;
+    try {
+      const payload = JSON.parse(text);
+      return rowsOf(payload).length ? payload : null;
+    } catch (_) {
       return null;
     }
+  }
 
-    function normalize(value, source, requestUrl) {
-      const d = value && value._d && value._d.data ? value._d.data : {};
-      const list = Array.isArray(d.data) ? d.data : [];
+  function normalize(payload, source, requestUrl, state, attempts) {
+    const d = dataOf(payload);
+    const list = rowsOf(payload);
+    const pageNo = Number(cfg.page || 1);
+    const pageSize = Number(cfg.pageSize || list.length || 10);
+    return {
+      source,
+      endpoint: ((state && state.origin) || 'https://sycm.taobao.com') + endpointPath,
+      requestUrl,
+      generatedAt: new Date().toISOString(),
+      page: pageNo,
+      pageSize,
+      recordCount: d.recordCount ?? d.total ?? null,
+      updateTime: (payload && payload._d && payload._d.updateTime) || d.updateTime || null,
+      attempts,
+      rows: list.map((x, i) => ({
+        rank: valueOf(x.rank) || ((pageNo - 1) * pageSize + i + 1),
+        itemId: (x.item && x.item.itemId) || valueOf(x.itemId) || '',
+        title: (x.item && x.item.title) || valueOf(x.title) || '',
+        itemNO: (x.item && x.item.itemNO) || valueOf(x.itemNO) || '',
+        pictUrl: (x.item && x.item.pictUrl) || valueOf(x.pictUrl) || '',
+        detailUrl: (x.item && x.item.detailUrl) || valueOf(x.detailUrl) || '',
+        payAmt: valueOf(x.payAmt),
+        payAmt_cycleCrc: x.payAmt && x.payAmt.cycleCrc,
+        payItmCnt: valueOf(x.payItmCnt),
+        payItmCnt_cycleCrc: x.payItmCnt && x.payItmCnt.cycleCrc,
+        payRate: valueOf(x.payRate),
+        payRatePct: x.payRate && typeof x.payRate.value === 'number' ? x.payRate.value * 100 : null,
+        payRate_cycleCrc: x.payRate && x.payRate.cycleCrc,
+        itmUv: valueOf(x.itmUv),
+        itmUv_cycleCrc: x.itmUv && x.itmUv.cycleCrc,
+        itemCartCnt: valueOf(x.itemCartCnt),
+        itemCartCnt_cycleCrc: x.itemCartCnt && x.itemCartCnt.cycleCrc,
+        raw: x
+      }))
+    };
+  }
+
+  async function getPageState() {
+    return await page.evaluate(() => {
+      const endpointPath = '/cc/item/live/view/top.json';
+      function tokenFromEntries() {
+        try {
+          const urls = performance.getEntriesByType('resource').map(e => e.name).reverse();
+          for (const u of urls) {
+            try {
+              if (u.includes('sycm.taobao.com/') && u.includes('token=')) {
+                const token = new URL(u, location.href).searchParams.get('token');
+                if (token) return token;
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+        return '';
+      }
+      function makeCandidateUrls() {
+        const cfg = JSON.parse(sessionStorage.getItem('__sycm_export_cfg') || '{}');
+        const endpointPath = '/cc/item/live/view/top.json';
+        const pageUrl = new URL(location.href);
+        const pageParams = pageUrl.searchParams;
+        const token = cfg.token || tokenFromEntries();
+        const q = new URLSearchParams();
+        const set = (name, value, fallback = '') => q.set(name, String(value ?? fallback));
+        set('dateRange', cfg.dateRange || pageParams.get('dateRange') || '');
+        set('dateType', cfg.dateType || pageParams.get('dateType') || 'today');
+        set('pageSize', cfg.pageSize || 10);
+        set('page', cfg.page || 1);
+        set('order', cfg.order || 'desc');
+        set('orderBy', cfg.orderBy || 'itmUv');
+        set('keyword', cfg.keyword ?? '');
+        set('follow', cfg.follow ?? false);
+        set('cateId', cfg.cateId || pageParams.get('cateId') || '');
+        set('cateLevel', cfg.cateLevel || pageParams.get('cateLevel') || '');
+        set('indexCode', cfg.indexCode || 'payAmt,payItmCnt,payRate,itmUv,itemCartCnt');
+        set('_', Date.now());
+        if (token) q.set('token', token);
+        return [location.origin + endpointPath + '?' + q.toString()];
+      }
+      const bodyText = document.body ? (document.body.innerText || '') : '';
+      const html = document.documentElement ? (document.documentElement.outerHTML || '') : '';
+      const riskWords = ['压力山大', '稍后再试', 'bixi.alicdn.com/punish', 'punish:resource:template', 'baxia', 'rgv587_flag'];
       return {
-        source,
-        endpoint: location.origin + endpointPath,
-        requestUrl,
-        recordCount: d.recordCount ?? null,
-        updateTime: value && value._d ? value._d.updateTime : null,
-        rows: list.map((x, i) => ({
-          rank: i + 1,
-          itemId: (x.item && x.item.itemId) || (x.itemId && x.itemId.value) || '',
-          title: (x.item && x.item.title) || '',
-          itemNO: (x.item && x.item.itemNO) || '',
-          payAmt: x.payAmt && x.payAmt.value,
-          payAmt_cycleCrc: x.payAmt && x.payAmt.cycleCrc,
-          payItmCnt: x.payItmCnt && x.payItmCnt.value,
-          payItmCnt_cycleCrc: x.payItmCnt && x.payItmCnt.cycleCrc,
-          payRate: x.payRate && x.payRate.value,
-          payRatePct: x.payRate && typeof x.payRate.value === 'number' ? x.payRate.value * 100 : null,
-          payRate_cycleCrc: x.payRate && x.payRate.cycleCrc,
-          itmUv: x.itmUv && x.itmUv.value,
-          itmUv_cycleCrc: x.itmUv && x.itmUv.cycleCrc,
-          itemCartCnt: x.itemCartCnt && x.itemCartCnt.value,
-          itemCartCnt_cycleCrc: x.itemCartCnt && x.itemCartCnt.cycleCrc
-        }))
+        url: location.href,
+        origin: location.origin,
+        pathname: location.pathname,
+        search: location.search,
+        token: tokenFromEntries(),
+        ua: navigator.userAgent,
+        riskVisible: riskWords.some(x => bodyText.includes(x) || html.includes(x)),
+        candidateUrls: makeCandidateUrls(),
+        lastPayload: sessionStorage.getItem('__sycm_last_rank_payload|' + endpointPath) || sessionStorage.getItem('__sycm_last_rank_payload') || '',
+        lastUrl: sessionStorage.getItem('__sycm_last_rank_url|' + endpointPath) || sessionStorage.getItem('__sycm_last_rank_url') || '',
+        cacheKeys: Object.keys(localStorage).filter(k => k.includes('/cc/item/live/view/top.json')).sort().slice(-50).map(k => ({ key: k, raw: localStorage.getItem(k) }))
       };
+    });
+  }
+
+  function parseCacheValue(raw) {
+    if (!raw) return null;
+    let outer;
+    try { outer = JSON.parse(raw); } catch (_) { outer = raw; }
+    if (typeof outer === 'string') {
+      const pipe = outer.indexOf('|');
+      if (pipe >= 0) {
+        try {
+          const obj = JSON.parse(outer.slice(pipe + 1));
+          return obj && Object.prototype.hasOwnProperty.call(obj, 'value') ? obj.value : obj;
+        } catch (_) { return null; }
+      }
+      try { return JSON.parse(outer); } catch (_) { return null; }
     }
+    if (outer && Object.prototype.hasOwnProperty.call(outer, 'value')) return outer.value;
+    return outer;
+  }
 
-    const token = cfg.token || getToken();
-    const q = new URLSearchParams();
-    q.set('dateRange', cfg.dateRange || '2026-06-25|2026-06-25');
-    q.set('dateType', cfg.dateType || 'today');
-    q.set('pageSize', String(cfg.pageSize || 10));
-    q.set('page', String(cfg.page || 1));
-    q.set('order', cfg.order || 'desc');
-    q.set('orderBy', cfg.orderBy || 'itmUv');
-    q.set('keyword', cfg.keyword || '');
-    q.set('follow', String(cfg.follow ?? false));
-    q.set('cateId', cfg.cateId || '');
-    q.set('cateLevel', cfg.cateLevel || '');
-    q.set('indexCode', cfg.indexCode || 'payAmt,payItmCnt,payRate,itmUv,itemCartCnt');
-    q.set('_', String(Date.now()));
-    if (token) q.set('token', token);
-    const requestUrl = location.origin + endpointPath + '?' + q.toString();
-
-    let text = '';
+  function cacheScore(key, state) {
+    let score = key.includes('__sycm_interceptor_cache|') ? 100 : 0;
+    const url = (state && state.candidateUrls && state.candidateUrls[0]) || '';
     try {
-      const resp = await fetch(requestUrl, {
+      const u = new URL(url);
+      for (const [name, value] of u.searchParams.entries()) {
+        if (value && key.includes(name + '=' + value)) score += 1;
+      }
+    } catch (_) {}
+    for (const name of ['dateRange', 'dateType', 'page', 'pageSize', 'orderBy']) {
+      const value = cfg[name];
+      if (value && key.includes(name + '=' + value)) score += 2;
+    }
+    return score;
+  }
+
+  async function fetchInPage(url) {
+    return await page.evaluate(async (url) => {
+      const resp = await fetch(url, {
         credentials: 'include',
         headers: {
           'sycm-referer': '/cc/item_rank',
           'onetrace-card-id': 'sycm-cc-item-rank.%2Fcc%2Fitem_rank'
         }
       });
-      text = await resp.text();
-      const json = JSON.parse(text);
-      if (json && json._d && json._d.data && Array.isArray(json._d.data.data)) {
-        return normalize(json, 'fetch', requestUrl);
+      const text = await resp.text();
+      return { status: resp.status, headers: Object.fromEntries(resp.headers.entries()), text };
+    }, url);
+  }
+
+  async function fetchByApiRequest(url, state) {
+    const resp = await page.context().request.get(url, {
+      headers: {
+        referer: state.url,
+        'sycm-referer': '/cc/item_rank',
+        'onetrace-card-id': 'sycm-cc-item-rank.%2Fcc%2Fitem_rank',
+        'user-agent': state.ua
       }
-      if (text.includes('rgv587_flag') || text.includes('bixi.alicdn.com/punish')) {
-        const cache = readLocalCache();
-        if (cache) return normalize(cache.value, 'localStorage-fallback-after-bxpunish', requestUrl);
+    });
+    const text = await resp.text();
+    return { status: resp.status(), headers: await resp.headers(), text };
+  }
+
+  async function extractDomFallback(state, requestUrl, attempts) {
+    const dom = await page.evaluate(() => {
+      const bodyText = document.body ? document.body.innerText || '' : '';
+      const pressureVisible = /压力山大|稍后再试/.test(bodyText);
+      const selectors = [
+        'table tbody tr', '[class*=ant-table-row]', '[class*=next-table-row]',
+        '[class*=table-row]', '[class*=rank-table] [class*=row]'
+      ];
+      const seen = new Set();
+      const rows = [];
+      const pushText = text => {
+        text = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!text || seen.has(text)) return;
+        if (/压力山大|稍后再试|首页 营销 交易|商品排行 统计时间|阿里巴巴集团|许可证|为何手动汇总/.test(text)) return;
+        seen.add(text);
+        const idMatch = text.match(/(?:ID[:：]?\s*)?(\d{8,})/);
+        const metricCount = (text.match(/支付|访客|加购|转化|金额|件数|¥|￥|\d{1,3}(,\d{3})*(\.\d+)?/g) || []).length;
+        if (!idMatch && metricCount < 3) return;
+        rows.push({ itemId: idMatch ? idMatch[1] : '', title: text.slice(0, 160), metricsText: text });
+      };
+      for (const sel of selectors) {
+        document.querySelectorAll(sel).forEach(el => pushText(el.innerText || el.textContent || ''));
+        if (rows.length >= 100) break;
       }
-      return { source: 'fetch-unexpected', endpoint: location.origin + endpointPath, requestUrl, rawPreview: text.slice(0, 500), rows: [] };
-    } catch (e) {
-      const cache = readLocalCache();
-      if (cache) return normalize(cache.value, 'localStorage-fallback-after-error:' + e.message, requestUrl);
-      return { source: 'error', endpoint: location.origin + endpointPath, requestUrl, error: e.message, rows: [] };
+      return { pressureVisible, rows: pressureVisible ? [] : rows.slice(0, 100), bodyPreview: bodyText.slice(0, 1000) };
+    });
+    attempts.push({ mode: 'dom-probe', pressureVisible: !!dom.pressureVisible, rows: dom.rows ? dom.rows.length : 0 });
+    if (dom.rows && dom.rows.length) {
+      return {
+        source: 'dom-fallback',
+        endpoint: state.origin + endpointPath,
+        requestUrl,
+        generatedAt: new Date().toISOString(),
+        page: Number(cfg.page || 1),
+        pageSize: Number(cfg.pageSize || dom.rows.length),
+        recordCount: null,
+        attempts,
+        rows: dom.rows.map((x, i) => ({ rank: i + 1, ...x }))
+      };
     }
-  });
+    return null;
+  }
+
+  const state = await getPageState();
+  const candidateUrls = state.candidateUrls || [];
+  const attempts = [{ mode: 'page-state', url: state.url, riskVisible: !!state.riskVisible, cacheKeys: (state.cacheKeys || []).length }];
+
+  for (const url of candidateUrls) {
+    try {
+      const r = await fetchInPage(url);
+      const payload = parsePayload(r.text, r.headers);
+      attempts.push({ mode: 'page-fetch', url, status: r.status, risk: isRiskText(r.text) || hasRiskHeaders(r.headers), rows: payload ? rowsOf(payload).length : 0 });
+      if (payload) return normalize(payload, 'page-fetch', url, state, attempts);
+    } catch (e) { attempts.push({ mode: 'page-fetch', url, error: e.message }); }
+  }
+
+  for (const url of candidateUrls) {
+    try {
+      const r = await fetchByApiRequest(url, state);
+      const payload = parsePayload(r.text, r.headers);
+      attempts.push({ mode: 'api-request', url, status: r.status, bxpunish: (r.headers && (r.headers.bxpunish || r.headers.Bxpunish)) || '', risk: isRiskText(r.text) || hasRiskHeaders(r.headers), rows: payload ? rowsOf(payload).length : 0 });
+      if (payload) return normalize(payload, 'api-request', url, state, attempts);
+    } catch (e) { attempts.push({ mode: 'api-request', url, error: e.message }); }
+  }
+
+  if (state.lastPayload) {
+    const lastMatchesEndpoint = String(state.lastUrl || '').includes(endpointPath);
+    const payload = lastMatchesEndpoint ? parsePayload(state.lastPayload, {}) : null;
+    attempts.push({ mode: 'sessionStorage-last', url: state.lastUrl, endpointMatch: lastMatchesEndpoint, rows: payload ? rowsOf(payload).length : 0 });
+    if (payload) return normalize(payload, 'sessionStorage-last', state.lastUrl || candidateUrls[0], state, attempts);
+  }
+
+  const cacheItems = [...(state.cacheKeys || [])].sort((a, b) => cacheScore(b.key, state) - cacheScore(a.key, state));
+  for (const item of cacheItems) {
+    const payload = parseCacheValue(item.raw);
+    attempts.push({ mode: 'localStorage', key: item.key, rows: rowsOf(payload).length });
+    if (payload && rowsOf(payload).length) return normalize(payload, 'localStorage', item.key, state, attempts);
+  }
+
+  const dom = await extractDomFallback(state, candidateUrls[0], attempts);
+  if (dom) return dom;
+
+  return { source: state.riskVisible ? 'not-found-risk-visible' : 'not-found', endpoint: state.origin + endpointPath, requestUrl: candidateUrls[0], attempts, rows: [] };
 }

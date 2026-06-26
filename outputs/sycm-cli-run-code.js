@@ -1,35 +1,588 @@
 async page => {
   const ctx = page.context();
-  await ctx.addInitScript(() => {
+
+  const ITEM_RANK_ENDPOINT = '/cc/item/live/view/top.json';
+  const MARKET_RANK_ENDPOINT = '/mc/mq/mkt/item/offline/rank.json';
+  const MARKET_RANK_ALTERNATES = [
+    '/mc/mq/mkt/item/offline/rank/search.json',
+    '/mc/mq/mkt/item/offline/rank/purpose.json'
+  ];
+
+  function parseJson(text) {
+    try { return JSON.parse(text); } catch (_) { return null; }
+  }
+
+  function getRankRowsFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') return [];
+    const candidates = [
+      payload && payload._d && payload._d.data && payload._d.data.data,
+      payload && payload._d && payload._d.data,
+      payload && payload.data && payload.data.data,
+      payload && payload.data,
+      payload && payload.list,
+      payload && payload.result
+    ];
+    for (const value of candidates) {
+      if (Array.isArray(value)) return value;
+    }
+    return [];
+  }
+
+  function hasRankRows(text) {
+    const json = typeof text === 'string' ? parseJson(text) : text;
+    return getRankRowsFromPayload(json).length > 0;
+  }
+
+  function isPunishBody(text) {
+    const s = String(text || '');
+    return (s.includes('rgv587_flag') && s.includes('punish')) ||
+      s.includes('bixi.alicdn.com/punish') ||
+      s.includes('punish:resource:template') ||
+      s.includes('bxpunish') ||
+      s.includes('punishURL') ||
+      s.includes('baxia') ||
+      s.includes('压力山大') ||
+      s.includes('稍后再试');
+  }
+
+  async function responseHeaders(resp) {
     try {
-      function readTopCache() {
+      const headers = await resp.headers();
+      return headers || {};
+    } catch (_) {
+      try { return resp.headers() || {}; } catch (__) { return {}; }
+    }
+  }
+
+  function isPunishHeaders(headers) {
+    const h = headers || {};
+    const joined = Object.keys(h).map(k => k + ':' + h[k]).join('\n').toLowerCase();
+    return joined.includes('bxpunish') || joined.includes('bixi.alicdn.com/punish') || joined.includes('punish');
+  }
+
+  function isPunishResponse(headers, text) {
+    return isPunishHeaders(headers) || isPunishBody(text);
+  }
+
+  function marketRankAlternateUrls(url) {
+    const source = String(url || '');
+    if (!source.includes(MARKET_RANK_ENDPOINT)) return [];
+    const preferred = source.includes('rankType=add') ?
+      '/mc/mq/mkt/item/offline/rank/purpose.json' :
+      '/mc/mq/mkt/item/offline/rank/search.json';
+    const ordered = [preferred, ...MARKET_RANK_ALTERNATES.filter(path => path !== preferred)];
+    return ordered.map(path => source.replace(MARKET_RANK_ENDPOINT, path));
+  }
+
+  async function readPageCache(endpoint, requestUrl) {
+    try {
+      return await page.evaluate(({ endpoint, requestUrl }) => {
+        function normalizeUrl(input) {
+          try { return new URL(input, location.href); } catch (_) { return null; }
+        }
+        function parseCacheValue(raw) {
+          if (!raw) return null;
+          let outer;
+          try { outer = JSON.parse(raw); } catch (_) { outer = raw; }
+          if (typeof outer === 'string') {
+            const pipe = outer.indexOf('|');
+            if (pipe >= 0) {
+              try {
+                const obj = JSON.parse(outer.slice(pipe + 1));
+                return obj && Object.prototype.hasOwnProperty.call(obj, 'value') ? obj.value : obj;
+              } catch (_) { return null; }
+            }
+            try { return JSON.parse(outer); } catch (_) { return null; }
+          }
+          if (outer && Object.prototype.hasOwnProperty.call(outer, 'value')) return outer.value;
+          return outer;
+        }
+        function rows(payload) {
+          if (!payload || typeof payload !== 'object') return [];
+          const candidates = [payload._d && payload._d.data && payload._d.data.data, payload._d && payload._d.data, payload.data && payload.data.data, payload.data, payload.list, payload.result];
+          for (const value of candidates) if (Array.isArray(value)) return value;
+          return [];
+        }
+        function score(key) {
+          const u = normalizeUrl(requestUrl);
+          let out = key.includes('__sycm_interceptor_cache|') ? 100 : 0;
+          if (u) {
+            for (const [name, value] of u.searchParams.entries()) {
+              if (value && key.includes(name + '=' + value)) out += 1;
+            }
+          }
+          const pageParams = new URLSearchParams(location.search || '');
+          for (const name of ['dateRange', 'dateType', 'cateId', 'parentCateId', 'cateFlag', 'activeKey']) {
+            const value = pageParams.get(name);
+            if (value && key.includes(name + '=' + value)) out += 2;
+          }
+          return out;
+        }
+        const keys = Object.keys(localStorage).filter(k => k.includes(endpoint)).sort((a, b) => score(b) - score(a));
+        for (const key of keys) {
+          try {
+            const value = parseCacheValue(localStorage.getItem(key));
+            if (rows(value).length > 0) return JSON.stringify(value);
+          } catch (_) {}
+        }
+        return null;
+      }, { endpoint, requestUrl });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function rememberPageCache(endpoint, requestUrl, text, source) {
+    if (!hasRankRows(text)) return;
+    try {
+      await page.evaluate(({ endpoint, requestUrl, text, source }) => {
+        function pack(value) {
+          const body = JSON.stringify({ value, source, savedAt: Date.now() });
+          return JSON.stringify(String(body.length) + '|' + body);
+        }
         try {
-          const params = new URLSearchParams(location.search || '');
-          const pageDateRange = params.get('dateRange') || '';
-          const pageDateType = params.get('dateType') || '';
-          const allKeys = Object.keys(localStorage).filter(k => k.includes('/cc/item/live/view/top.json'));
-          const keys = allKeys.sort((a, b) => {
-            const as = (pageDateRange && a.includes('dateRange=' + pageDateRange) ? 2 : 0) + (pageDateType && a.includes('dateType=' + pageDateType) ? 1 : 0);
-            const bs = (pageDateRange && b.includes('dateRange=' + pageDateRange) ? 2 : 0) + (pageDateType && b.includes('dateType=' + pageDateType) ? 1 : 0);
-            return bs - as;
+          const value = JSON.parse(text);
+          const key = '__sycm_interceptor_cache|' + endpoint + '|' + new URL(requestUrl, location.href).pathname + '?' + new URL(requestUrl, location.href).searchParams.toString();
+          localStorage.setItem(key, pack(value));
+          sessionStorage.setItem('__sycm_last_rank_payload|' + endpoint, text);
+          sessionStorage.setItem('__sycm_last_rank_url|' + endpoint, requestUrl);
+          sessionStorage.setItem('__sycm_last_rank_payload', text);
+          sessionStorage.setItem('__sycm_last_rank_url', requestUrl);
+        } catch (_) {}
+      }, { endpoint, requestUrl, text, source });
+    } catch (_) {}
+  }
+
+
+  function makeOuterEmptyResponse(endpoint, requestUrl) {
+    const now = Date.now();
+    const base = {
+      code: 0,
+      message: 'ok-empty-risk-fallback',
+      data: { recordCount: 0, total: 0, data: [], list: [], result: [] },
+      _e: now,
+      _id: 'sycm-rank-empty-fallback'
+    };
+    if (endpoint === ITEM_RANK_ENDPOINT) {
+      base._d = {
+        code: 0,
+        message: 'ok-empty-risk-fallback',
+        data: { recordCount: 0, total: 0, data: [] },
+        updateTime: new Date(now).toISOString().replace('T', ' ').slice(0, 19)
+      };
+      return JSON.stringify(base);
+    }
+    base._d = {
+      code: 0,
+      message: 'ok-empty-risk-fallback',
+      data: { recordCount: 0, total: 0, data: [], list: [], result: [] },
+      updateTime: new Date(now).toISOString().replace('T', ' ').slice(0, 19)
+    };
+    return JSON.stringify(base);
+  }
+
+  async function installItemRankRoute() {
+    const pattern = '**/cc/item/live/view/top.json**';
+    await page.unroute(pattern).catch(() => {});
+    await page.route(pattern, async route => {
+      const request = route.request();
+      const originalUrl = request.url();
+      const fulfillJson = async (body, source) => route.fulfill({
+        status: 200,
+        contentType: 'application/json;charset=UTF-8',
+        headers: {
+          'cache-control': 'no-store',
+          'content-type': 'application/json;charset=UTF-8',
+          'x-sycm-fallback-source': source
+        },
+        body
+      });
+      try {
+        const originalResp = await route.fetch();
+        const originalHeaders = await responseHeaders(originalResp);
+        const originalText = await originalResp.text();
+        if (!isPunishResponse(originalHeaders, originalText) && hasRankRows(originalText)) {
+          await rememberPageCache(ITEM_RANK_ENDPOINT, originalUrl, originalText, 'item-route-original');
+          await route.fulfill({
+            status: originalResp.status(),
+            headers: originalHeaders,
+            body: originalText
           });
+          return;
+        }
+
+        const headers = { ...request.headers() };
+        delete headers.host;
+        headers.referer = headers.referer || page.url();
+        headers['sycm-referer'] = headers['sycm-referer'] || '/cc/item_rank';
+        headers['onetrace-card-id'] = headers['onetrace-card-id'] || 'sycm-cc-item-rank.%2Fcc%2Fitem_rank';
+        try {
+          const apiResp = await ctx.request.get(originalUrl, { headers });
+          const apiHeaders = await responseHeaders(apiResp);
+          const apiText = await apiResp.text();
+          if (!isPunishResponse(apiHeaders, apiText) && hasRankRows(apiText)) {
+            await rememberPageCache(ITEM_RANK_ENDPOINT, originalUrl, apiText, 'item-route-api-request');
+            await fulfillJson(apiText, 'api-request');
+            return;
+          }
+        } catch (_) {}
+
+        const cached = await readPageCache(ITEM_RANK_ENDPOINT, originalUrl);
+        if (cached && hasRankRows(cached)) {
+          await fulfillJson(cached, 'localStorage');
+          return;
+        }
+
+        await fulfillJson(makeOuterEmptyResponse(ITEM_RANK_ENDPOINT, originalUrl), 'empty-risk-fallback');
+      } catch (e) {
+        const cached = await readPageCache(ITEM_RANK_ENDPOINT, originalUrl);
+        if (cached && hasRankRows(cached)) {
+          await fulfillJson(cached, 'localStorage-after-error').catch(() => {});
+          return;
+        }
+        await fulfillJson(makeOuterEmptyResponse(ITEM_RANK_ENDPOINT, originalUrl), 'empty-error-fallback').catch(() => {});
+      }
+    });
+  }
+
+  async function installMarketRankRoute() {
+    const pattern = '**/mc/mq/mkt/item/offline/rank.json**';
+    await page.unroute(pattern).catch(() => {});
+    await page.route(pattern, async route => {
+      const request = route.request();
+      const originalUrl = request.url();
+      try {
+        const originalResp = await route.fetch();
+        const originalHeaders = await responseHeaders(originalResp);
+        const originalText = await originalResp.text();
+        if (!isPunishResponse(originalHeaders, originalText) && hasRankRows(originalText)) {
+          await rememberPageCache(MARKET_RANK_ENDPOINT, originalUrl, originalText, 'route-original');
+          await route.fulfill({
+            status: originalResp.status(),
+            headers: originalHeaders,
+            body: originalText
+          });
+          return;
+        }
+
+        const headers = { ...request.headers() };
+        delete headers.host;
+        headers.referer = headers.referer || page.url();
+        headers['sycm-referer'] = headers['sycm-referer'] || '/mc/free/market_rank';
+        headers['onetrace-card-id'] = headers['onetrace-card-id'] || '%2Fmc%2Ffree%2Fmarket_rank%7C%E5%B8%82%E5%9C%BA%E6%8E%92%E8%A1%8C-%E5%95%86%E5%93%81-%E5%95%86%E5%93%81%E6%8E%92%E8%A1%8C';
+
+        for (const altUrl of marketRankAlternateUrls(originalUrl)) {
+          try {
+            const altResp = await ctx.request.get(altUrl, { headers });
+            const altHeaders = await responseHeaders(altResp);
+            const altText = await altResp.text();
+            if (!isPunishResponse(altHeaders, altText) && hasRankRows(altText)) {
+              await rememberPageCache(MARKET_RANK_ENDPOINT, originalUrl, altText, 'route-alternate:' + altUrl);
+              await route.fulfill({
+                status: 200,
+                contentType: 'application/json;charset=UTF-8',
+                headers: {
+                  'cache-control': 'no-store',
+                  'content-type': 'application/json;charset=UTF-8',
+                  'x-sycm-fallback-source': altUrl
+                },
+                body: altText
+              });
+              return;
+            }
+          } catch (_) {}
+        }
+
+        const cached = await readPageCache(MARKET_RANK_ENDPOINT, originalUrl);
+        if (cached && hasRankRows(cached)) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json;charset=UTF-8',
+            headers: { 'cache-control': 'no-store', 'content-type': 'application/json;charset=UTF-8', 'x-sycm-fallback-source': 'localStorage' },
+            body: cached
+          });
+          return;
+        }
+
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json;charset=UTF-8',
+          body: JSON.stringify({ code: 0, message: 'fallback-empty-no-cache', data: { recordCount: 0, data: [] } })
+        });
+      } catch (e) {
+        const cached = await readPageCache(MARKET_RANK_ENDPOINT, originalUrl);
+        if (cached && hasRankRows(cached)) {
+          await route.fulfill({ status: 200, contentType: 'application/json;charset=UTF-8', body: cached }).catch(() => {});
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json;charset=UTF-8',
+          body: JSON.stringify({ code: 0, message: 'fallback-error:' + (e && e.message || e), data: { recordCount: 0, data: [] } })
+        }).catch(() => {});
+      }
+    });
+  }
+
+  await installMarketRankRoute();
+  await installItemRankRoute();
+
+  const installSycmPatch = () => {
+    try {
+      const ITEM_RANK_ENDPOINT = '/cc/item/live/view/top.json';
+      const ENDPOINTS = [
+        ITEM_RANK_ENDPOINT,
+        '/mc/mq/mkt/item/offline/rank.json',
+        '/mc/mq/mkt/item/offline/rank/search.json',
+        '/mc/mq/mkt/item/offline/rank/purpose.json'
+      ];
+      const MARKET_RANK_ENDPOINT = '/mc/mq/mkt/item/offline/rank.json';
+
+      function normalizeUrl(input) {
+        try {
+          const raw = typeof input === 'string' ? input : (input && input.url) || '';
+          return new URL(raw, location.href);
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function endpointFor(input) {
+        const u = normalizeUrl(input);
+        if (!u) return '';
+        if (u.pathname.includes('/mc/mq/mkt/item/offline/rank/')) return MARKET_RANK_ENDPOINT;
+        return ENDPOINTS.find(path => u.pathname.includes(path)) || '';
+      }
+
+      function isPunishUrl(value) {
+        const s = String(value || '');
+        return s.includes('bixi.alicdn.com/punish') ||
+          s.includes('punish:resource:template') ||
+          s.includes('/punish/') ||
+          s.includes('bxpunish');
+      }
+
+      function isPunishText(text) {
+        const s = String(text || '');
+        return (s.includes('rgv587_flag') && s.includes('punish')) ||
+          s.includes('bixi.alicdn.com/punish') ||
+          s.includes('punish:resource:template') ||
+          s.includes('bxpunish') ||
+          s.includes('punishURL') ||
+          s.includes('baxia') ||
+          s.includes('压力山大') ||
+          s.includes('稍后再试');
+      }
+
+      function parseCacheValue(raw) {
+        if (!raw) return null;
+        let outer;
+        try { outer = JSON.parse(raw); } catch (_) { outer = raw; }
+        if (typeof outer === 'string') {
+          const pipe = outer.indexOf('|');
+          if (pipe >= 0) {
+            const obj = JSON.parse(outer.slice(pipe + 1));
+            return obj && Object.prototype.hasOwnProperty.call(obj, 'value') ? obj.value : obj;
+          }
+          try { return JSON.parse(outer); } catch (_) { return null; }
+        }
+        if (outer && Object.prototype.hasOwnProperty.call(outer, 'value')) return outer.value;
+        return outer;
+      }
+
+      function getRankRowsFromPayload(payload) {
+        if (!payload || typeof payload !== 'object') return [];
+        const candidates = [
+          payload && payload._d && payload._d.data && payload._d.data.data,
+          payload && payload._d && payload._d.data,
+          payload && payload.data && payload.data.data,
+          payload && payload.data,
+          payload && payload.list,
+          payload && payload.result
+        ];
+        for (const value of candidates) if (Array.isArray(value)) return value;
+        return [];
+      }
+
+      function hasUsablePayload(value) {
+        return getRankRowsFromPayload(value).length > 0;
+      }
+
+      function hasUsablePayloadText(text) {
+        try { return hasUsablePayload(JSON.parse(text)); } catch (_) { return false; }
+      }
+
+      function cacheScore(key, requestUrl) {
+        const u = normalizeUrl(requestUrl);
+        let score = key.includes('__sycm_interceptor_cache|') ? 100 : 0;
+        if (!u) return score;
+        for (const [name, value] of u.searchParams.entries()) {
+          if (value && key.includes(name + '=' + value)) score += 1;
+        }
+        const pageParams = new URLSearchParams(location.search || '');
+        for (const name of ['dateRange', 'dateType', 'cateId', 'parentCateId', 'cateFlag', 'activeKey']) {
+          const value = pageParams.get(name);
+          if (value && key.includes(name + '=' + value)) score += 2;
+        }
+        return score;
+      }
+
+      function cacheKey(endpoint, requestUrl) {
+        const u = normalizeUrl(requestUrl);
+        return '__sycm_interceptor_cache|' + endpoint + '|' + (u ? (u.pathname + '?' + u.searchParams.toString()) : String(requestUrl || ''));
+      }
+
+      function packCache(value, source) {
+        const body = JSON.stringify({ value, source, savedAt: Date.now() });
+        return JSON.stringify(String(body.length) + '|' + body);
+      }
+
+      function rememberCache(endpoint, requestUrl, text, source) {
+        try {
+          const value = JSON.parse(text);
+          if (!hasUsablePayload(value)) return;
+          localStorage.setItem(cacheKey(endpoint, requestUrl), packCache(value, source || 'page'));
+          sessionStorage.setItem('__sycm_last_rank_payload|' + endpoint, text);
+          sessionStorage.setItem('__sycm_last_rank_url|' + endpoint, String(requestUrl || ''));
+          sessionStorage.setItem('__sycm_last_rank_payload', text);
+          sessionStorage.setItem('__sycm_last_rank_url', String(requestUrl || ''));
+        } catch (_) {}
+      }
+
+      function readCacheForEndpoint(endpoint, requestUrl) {
+        try {
+          const keys = Object.keys(localStorage)
+            .filter(k => k.includes(endpoint))
+            .sort((a, b) => cacheScore(b, requestUrl) - cacheScore(a, requestUrl));
           for (const key of keys) {
             try {
-              const raw = localStorage.getItem(key);
-              let outer;
-              try { outer = JSON.parse(raw); } catch (_) { outer = raw; }
-              if (typeof outer !== 'string') continue;
-              const pipe = outer.indexOf('|');
-              if (pipe < 0) continue;
-              const obj = JSON.parse(outer.slice(pipe + 1));
-              const data = obj && obj.value && obj.value._d && obj.value._d.data;
-              if (data && Array.isArray(data.data) && data.data.length) {
-                return JSON.stringify(obj.value);
-              }
+              const value = parseCacheValue(localStorage.getItem(key));
+              if (hasUsablePayload(value)) return JSON.stringify(value);
             } catch (_) {}
           }
         } catch (_) {}
+        try {
+          const scopedLast = sessionStorage.getItem('__sycm_last_rank_payload|' + endpoint);
+          if (scopedLast && hasUsablePayloadText(scopedLast)) return scopedLast;
+          const lastUrl = sessionStorage.getItem('__sycm_last_rank_url') || '';
+          const last = sessionStorage.getItem('__sycm_last_rank_payload');
+          if (lastUrl.includes(endpoint) && last && hasUsablePayloadText(last)) return last;
+        } catch (_) {}
         return null;
+      }
+
+      function makeEmptyResponse(requestUrl) {
+        const u = normalizeUrl(requestUrl);
+        const endpoint = endpointFor(requestUrl);
+        const now = Date.now();
+        const dateRange = (u && u.searchParams.get('dateRange')) || new URLSearchParams(location.search || '').get('dateRange') || '';
+        const dateType = (u && u.searchParams.get('dateType')) || new URLSearchParams(location.search || '').get('dateType') || '';
+        const itemShape = endpoint === ITEM_RANK_ENDPOINT;
+        return JSON.stringify({
+          code: 0,
+          message: 'ok-empty-risk-fallback',
+          data: { recordCount: 0, total: 0, data: [], list: [], result: [] },
+          _d: {
+            code: 0,
+            message: 'ok-empty-risk-fallback',
+            data: itemShape ? { recordCount: 0, total: 0, data: [] } : { recordCount: 0, total: 0, data: [], list: [], result: [] },
+            dateRange,
+            dateType,
+            updateTime: new Date(now).toISOString().replace('T', ' ').slice(0, 19)
+          },
+          _e: now,
+          _id: 'sycm-rank-empty-fallback'
+        });
+      }
+
+      function fallbackFor(requestUrl) {
+        const endpoint = endpointFor(requestUrl);
+        if (!endpoint) return null;
+        const cached = readCacheForEndpoint(endpoint, requestUrl);
+        if (cached) return cached;
+        if (endpoint === MARKET_RANK_ENDPOINT || endpoint === ITEM_RANK_ENDPOINT) return makeEmptyResponse(requestUrl);
+        return null;
+      }
+
+      function isBaxiaNode(node) {
+        try {
+          if (!node || node.nodeType !== 1) return false;
+          const el = node;
+          const cls = String(el.className || '');
+          const id = String(el.id || '');
+          const src = String(el.src || el.getAttribute && el.getAttribute('src') || '');
+          const html = String(el.outerHTML || '');
+          return cls.includes('baxia') || id.includes('baxia') || cls.includes('punish') || id.includes('punish') || isPunishUrl(src) || isPunishUrl(html);
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function installBaxiaStyleGuard() {
+        try {
+          if (document.getElementById('__sycm_baxia_style_guard')) return;
+          const style = document.createElement('style');
+          style.id = '__sycm_baxia_style_guard';
+          style.textContent = [
+            '.baxia-dialog', '.baxia-dialog-mask', '.baxia-dialog-content', '.baxia-dialog-close',
+            '[class*=baxia]', '[id*=baxia]', '[class*=punish]', '[id*=punish]',
+            'iframe[src*=bixi.alicdn.com/punish]', 'iframe[src*=punish:resource:template]', 'iframe[src*=/punish/]'
+          ].join(',') + '{display:none!important;visibility:hidden!important;opacity:0!important;pointer-events:none!important;}';
+          (document.head || document.documentElement).appendChild(style);
+        } catch (_) {}
+      }
+
+      function cleanupBaxia() {
+        try {
+          installBaxiaStyleGuard();
+          const selectors = [
+            '.baxia-dialog', '.baxia-dialog-mask', '.baxia-dialog-content', '.baxia-dialog-close',
+            '[class*=baxia]', '[id*=baxia]', '[class*=punish]', '[id*=punish]',
+            'iframe[src*=bixi.alicdn.com/punish]', 'iframe[src*=punish:resource:template]', 'iframe[src*=/punish/]'
+          ];
+          document.querySelectorAll(selectors.join(',')).forEach(el => { try { el.remove(); } catch (_) {} });
+          try { document.body && (document.body.style.overflow = ''); } catch (_) {}
+        } catch (_) {}
+      }
+
+      function installBaxiaDomGuard() {
+        if (window.__sycmBaxiaDomGuard) return;
+        window.__sycmBaxiaDomGuard = true;
+
+        const nativeAppendChild = Node.prototype.appendChild;
+        Node.prototype.appendChild = function(node) {
+          if (isBaxiaNode(node)) { setTimeout(cleanupBaxia, 0); return node; }
+          return nativeAppendChild.apply(this, arguments);
+        };
+
+        const nativeInsertBefore = Node.prototype.insertBefore;
+        Node.prototype.insertBefore = function(node) {
+          if (isBaxiaNode(node)) { setTimeout(cleanupBaxia, 0); return node; }
+          return nativeInsertBefore.apply(this, arguments);
+        };
+
+        const nativeSetAttribute = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function(name, value) {
+          if (String(name || '').toLowerCase() === 'src' && isPunishUrl(value)) { setTimeout(cleanupBaxia, 0); return; }
+          return nativeSetAttribute.apply(this, arguments);
+        };
+
+        try {
+          const nativeOpen = window.open;
+          window.open = function(url) { if (isPunishUrl(url)) { setTimeout(cleanupBaxia, 0); return null; } return nativeOpen.apply(this, arguments); };
+        } catch (_) {}
+
+        const startObserver = () => {
+          cleanupBaxia();
+          try {
+            const root = document.documentElement || document;
+            const mo = new MutationObserver(() => cleanupBaxia());
+            mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'class', 'id', 'style'] });
+          } catch (_) {}
+        };
+        if (document.documentElement) startObserver();
+        else addEventListener('DOMContentLoaded', startObserver, { once: true });
+        try { setInterval(cleanupBaxia, 1000); } catch (_) {}
       }
 
       try { localStorage.removeItem('debugConfig'); localStorage.removeItem('useDebug'); } catch (_) {}
@@ -38,15 +591,9 @@ async page => {
 
       const block = (e) => {
         const k = String(e.key || '').toLowerCase();
-        if (k === 'f12' || (e.ctrlKey && e.shiftKey && ['i', 'j', 'c'].includes(k)) || (e.ctrlKey && k === 'u')) {
-          e.stopImmediatePropagation();
-        }
+        if (k === 'f12' || (e.ctrlKey && e.shiftKey && ['i', 'j', 'c'].includes(k)) || (e.ctrlKey && k === 'u')) e.stopImmediatePropagation();
       };
-      try {
-        addEventListener('keydown', block, true);
-        addEventListener('keyup', block, true);
-        addEventListener('keypress', block, true);
-      } catch (_) {}
+      try { addEventListener('keydown', block, true); addEventListener('keyup', block, true); addEventListener('keypress', block, true); } catch (_) {}
 
       try { Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth + 8, configurable: true }); } catch (_) {}
       try { Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 118, configurable: true }); } catch (_) {}
@@ -54,20 +601,25 @@ async page => {
       try { Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible', configurable: true }); } catch (_) {}
       try { document.hasFocus = new Proxy(document.hasFocus, { apply: () => true }); } catch (_) {}
 
-      if (!window.__sycmTopFallbackFetch) {
-        window.__sycmTopFallbackFetch = true;
+      installBaxiaDomGuard();
+      cleanupBaxia();
+
+      if (!window.__sycmRankFallbackFetch) {
+        window.__sycmRankFallbackFetch = true;
         const NativeResponse = window.Response;
         const nativeFetch = window.fetch;
         window.fetch = async function(input, init) {
-          const url = typeof input === 'string' ? input : (input && input.url) || '';
+          const requestUrl = typeof input === 'string' ? input : (input && input.url) || '';
+          const endpoint = endpointFor(requestUrl);
           const resp = await nativeFetch.apply(this, arguments);
-          if (url.includes('/cc/item/live/view/top.json')) {
+          if (endpoint) {
             try {
-              const clone = resp.clone();
-              const text = await clone.text();
-              if (text && text.includes('rgv587_flag') && text.includes('bixi.alicdn.com/punish')) {
-                const cached = readTopCache();
-                if (cached) return new NativeResponse(cached, { status: 200, statusText: 'OK', headers: { 'content-type': 'application/json;charset=UTF-8' } });
+              const text = await resp.clone().text();
+              if (!isPunishText(text) && hasUsablePayloadText(text)) rememberCache(endpoint, requestUrl, text, 'fetch');
+              if (isPunishText(text)) {
+                cleanupBaxia();
+                const fallback = fallbackFor(requestUrl);
+                if (fallback) return new NativeResponse(fallback, { status: 200, statusText: 'OK', headers: { 'content-type': 'application/json;charset=UTF-8' } });
               }
             } catch (_) {}
           }
@@ -75,26 +627,28 @@ async page => {
         };
       }
 
-      if (!window.__sycmTopFallbackXHR) {
-        window.__sycmTopFallbackXHR = true;
+      if (!window.__sycmRankFallbackXHR) {
+        window.__sycmRankFallbackXHR = true;
         const XHR = window.XMLHttpRequest;
         const open = XHR.prototype.open;
         const send = XHR.prototype.send;
-        XHR.prototype.open = function(method, url) {
-          this.__sycm_url = String(url || '');
-          return open.apply(this, arguments);
-        };
+        XHR.prototype.open = function(method, url) { this.__sycm_url = String(url || ''); return open.apply(this, arguments); };
         XHR.prototype.send = function() {
-          if (this.__sycm_url && this.__sycm_url.includes('/cc/item/live/view/top.json')) {
+          if (this.__sycm_url && endpointFor(this.__sycm_url)) {
             this.addEventListener('readystatechange', () => {
               try {
-                if (this.readyState === 4 && this.responseText && this.responseText.includes('rgv587_flag') && this.responseText.includes('bixi.alicdn.com/punish')) {
-                  const cached = readTopCache();
-                  if (cached) {
-                    Object.defineProperty(this, 'responseText', { get: () => cached, configurable: true });
-                    Object.defineProperty(this, 'response', { get: () => cached, configurable: true });
-                    Object.defineProperty(this, 'status', { get: () => 200, configurable: true });
-                    Object.defineProperty(this, 'statusText', { get: () => 'OK', configurable: true });
+                if (this.readyState === 4 && this.responseText) {
+                  const endpoint = endpointFor(this.__sycm_url);
+                  if (!isPunishText(this.responseText) && hasUsablePayloadText(this.responseText)) rememberCache(endpoint, this.__sycm_url, this.responseText, 'xhr');
+                  if (isPunishText(this.responseText)) {
+                    cleanupBaxia();
+                    const fallback = fallbackFor(this.__sycm_url);
+                    if (fallback) {
+                      Object.defineProperty(this, 'responseText', { get: () => fallback, configurable: true });
+                      Object.defineProperty(this, 'response', { get: () => fallback, configurable: true });
+                      Object.defineProperty(this, 'status', { get: () => 200, configurable: true });
+                      Object.defineProperty(this, 'statusText', { get: () => 'OK', configurable: true });
+                    }
                   }
                 }
               } catch (_) {}
@@ -104,12 +658,15 @@ async page => {
         };
       }
     } catch (_) {}
-  });
+  };
+
+  await ctx.addInitScript(installSycmPatch);
+  await page.evaluate(installSycmPatch).catch(() => {});
 
   try {
     const client = await ctx.newCDPSession(page);
     await client.send('Debugger.setSkipAllPauses', { skip: true }).catch(() => {});
   } catch (_) {}
 
-  return { installed: true, url: page.url(), note: 'reload page to activate init script' };
+  return { installed: true, url: page.url(), endpoints: [ITEM_RANK_ENDPOINT, MARKET_RANK_ENDPOINT], note: 'reload page to activate init script' };
 }
