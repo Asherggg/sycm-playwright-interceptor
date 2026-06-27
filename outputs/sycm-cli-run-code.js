@@ -504,6 +504,11 @@ async page => {
         return null;
       }
 
+      function isPressureText(text) {
+        const s = String(text || '');
+        return s.includes('压力山大') || s.includes('稍后再试');
+      }
+
       function isBaxiaNode(node) {
         try {
           if (!node || node.nodeType !== 1) return false;
@@ -516,6 +521,37 @@ async page => {
         } catch (_) {
           return false;
         }
+      }
+
+      function cleanupPressureText() {
+        try {
+          if (!document.body) return;
+          const nodes = Array.from(document.body.querySelectorAll('div,span,p,td,tr,section,article'));
+          for (const el of nodes) {
+            const text = el.innerText || el.textContent || '';
+            if (!isPressureText(text)) continue;
+            const hasPressureChild = Array.from(el.children || []).some(child => isPressureText(child.innerText || child.textContent || ''));
+            if (!hasPressureChild) {
+              try { el.remove(); } catch (_) { try { el.style.display = 'none'; } catch (_) {} }
+            }
+          }
+        } catch (_) {}
+      }
+
+      function installPressureDomGuard() {
+        if (window.__sycmPressureDomGuard) return;
+        window.__sycmPressureDomGuard = true;
+        const startObserver = () => {
+          cleanupPressureText();
+          try {
+            const root = document.documentElement || document;
+            const mo = new MutationObserver(() => cleanupPressureText());
+            mo.observe(root, { childList: true, subtree: true, characterData: true });
+          } catch (_) {}
+          try { setInterval(cleanupPressureText, 1000); } catch (_) {}
+        };
+        if (document.documentElement) startObserver();
+        else addEventListener('DOMContentLoaded', startObserver, { once: true });
       }
 
       function installBaxiaStyleGuard() {
@@ -601,8 +637,10 @@ async page => {
       try { Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible', configurable: true }); } catch (_) {}
       try { document.hasFocus = new Proxy(document.hasFocus, { apply: () => true }); } catch (_) {}
 
+      installPressureDomGuard();
       installBaxiaDomGuard();
       cleanupBaxia();
+      cleanupPressureText();
 
       if (!window.__sycmRankFallbackFetch) {
         window.__sycmRankFallbackFetch = true;

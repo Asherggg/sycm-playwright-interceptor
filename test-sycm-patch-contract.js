@@ -61,6 +61,18 @@ assert.match(
 
 assert.match(
   patchSource,
+  /installPressureDomGuard/,
+  'patch must keep removing pressure/try-later DOM messages after older guards are installed'
+);
+
+assert.match(
+  patchSource,
+  /cleanupPressureText/,
+  'patch must remove visible pressure/try-later text nodes from the ranking table'
+);
+
+assert.match(
+  patchSource,
   /bixi\.alicdn\.com\/punish/,
   'patch must detect the Baxia punish payload/iframe'
 );
