@@ -446,6 +446,7 @@ async page => {
           sessionStorage.setItem('__sycm_last_rank_url|' + endpoint, String(requestUrl || ''));
           sessionStorage.setItem('__sycm_last_rank_payload', text);
           sessionStorage.setItem('__sycm_last_rank_url', String(requestUrl || ''));
+          if (endpoint === ITEM_RANK_ENDPOINT) setTimeout(renderRecoveredItemRank, 0);
         } catch (_) {}
       }
 
@@ -469,6 +470,85 @@ async page => {
           if (lastUrl.includes(endpoint) && last && hasUsablePayloadText(last)) return last;
         } catch (_) {}
         return null;
+      }
+
+
+      function scalarValue(value) {
+        if (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'value')) return value.value;
+        return value == null ? '' : value;
+      }
+
+      function formatMetric(value) {
+        const raw = scalarValue(value);
+        if (raw === '' || raw == null) return '';
+        if (typeof raw === 'number') {
+          try { return raw.toLocaleString('zh-CN', { maximumFractionDigits: 2 }); } catch (_) { return String(raw); }
+        }
+        return String(raw);
+      }
+
+      function escapeHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+      }
+
+      function renderRecoveredItemRank() {
+        try {
+          if (!location.pathname.includes('/cc/item_rank')) return;
+          if (!document.body) return;
+          const existing = document.getElementById('__sycm_item_rank_recovered');
+          const pageText = document.body.innerText || '';
+          const recoveredText = existing ? (existing.innerText || existing.textContent || '') : '';
+          const nativeText = recoveredText ? pageText.replace(recoveredText, '') : pageText;
+          const nativeHasRows = /ID:\d+/.test(nativeText) && /\d{1,3}(,\d{3})*\.\d{2}/.test(nativeText);
+          const pressureVisible = isPressureText(nativeText);
+          if (nativeHasRows && !pressureVisible) {
+            if (existing) existing.remove();
+            return;
+          }
+          const cachedText = readCacheForEndpoint(ITEM_RANK_ENDPOINT, location.href);
+          if (!cachedText) return;
+          const payload = JSON.parse(cachedText);
+          const rows = getRankRowsFromPayload(payload).slice(0, 20);
+          if (!rows.length) return;
+          const signature = rows.map((row, index) => {
+            const item = row.item || {};
+            return [index, scalarValue(item.itemId) || scalarValue(row.itemId) || '', scalarValue(row.payAmt), scalarValue(row.itmUv || row.uv)].join(':');
+          }).join('|');
+          const host = document.querySelector('.sycm-cc-item-rank-table') || document.querySelector('#item-rank .oui-card-content') || document.querySelector('#item-rank') || document.body;
+          const parent = host.parentElement || document.body;
+          const box = existing || document.createElement('div');
+          if (existing && existing.getAttribute('data-signature') === signature) return;
+          box.id = '__sycm_item_rank_recovered';
+          box.setAttribute('data-signature', signature);
+          box.setAttribute('data-sycm-f12-fallback', 'item-rank');
+          box.style.cssText = 'margin:12px 0;padding:12px;border:1px solid #d7e3ff;border-radius:8px;background:#f7faff;color:#1f2937;font-size:12px;line-height:1.5;overflow:auto;';
+          const header = '<div style="font-weight:600;margin-bottom:8px;color:#1d4ed8">F12-safe ??????????????</div>';
+          const tableHead = '<thead><tr>' + ['??','??','??ID','????','????','?????','???','????'].map(h => '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid #dbeafe;white-space:nowrap">' + h + '</th>').join('') + '</tr></thead>';
+          const tableRows = rows.map((row, index) => {
+            const item = row.item || {};
+            const itemId = scalarValue(item.itemId) || scalarValue(row.itemId) || '';
+            const title = item.title || scalarValue(row.title) || '';
+            const rank = scalarValue(row.rank) || scalarValue(row.cateRankId) || (index + 1);
+            const payAmt = formatMetric(row.payAmt);
+            const payItmCnt = formatMetric(row.payItmCnt);
+            const payRateRaw = scalarValue(row.payRate);
+            const payRate = typeof payRateRaw === 'number' ? (payRateRaw * 100).toFixed(2) + '%' : formatMetric(payRateRaw);
+            const uv = formatMetric(row.itmUv || row.uv);
+            const cart = formatMetric(row.itemCartCnt || row.cartByrCnt);
+            return '<tr>' +
+              '<td style="padding:6px 8px;border-bottom:1px solid #edf2ff">' + escapeHtml(rank) + '</td>' +
+              '<td style="padding:6px 8px;border-bottom:1px solid #edf2ff;min-width:220px">' + escapeHtml(title) + '</td>' +
+              '<td style="padding:6px 8px;border-bottom:1px solid #edf2ff;white-space:nowrap">ID:' + escapeHtml(itemId) + '</td>' +
+              '<td style="padding:6px 8px;border-bottom:1px solid #edf2ff;white-space:nowrap">' + escapeHtml(payAmt) + '</td>' +
+              '<td style="padding:6px 8px;border-bottom:1px solid #edf2ff;white-space:nowrap">' + escapeHtml(payItmCnt) + '</td>' +
+              '<td style="padding:6px 8px;border-bottom:1px solid #edf2ff;white-space:nowrap">' + escapeHtml(payRate) + '</td>' +
+              '<td style="padding:6px 8px;border-bottom:1px solid #edf2ff;white-space:nowrap">' + escapeHtml(uv) + '</td>' +
+              '<td style="padding:6px 8px;border-bottom:1px solid #edf2ff;white-space:nowrap">' + escapeHtml(cart) + '</td>' +
+              '</tr>';
+          }).join('');
+          box.innerHTML = header + '<table style="border-collapse:collapse;width:100%;background:white">' + tableHead + '<tbody>' + tableRows + '</tbody></table>';
+          if (!existing) parent.insertBefore(box, host.nextSibling);
+        } catch (_) {}
       }
 
       function makeEmptyResponse(requestUrl) {
@@ -539,16 +619,21 @@ async page => {
       }
 
       function installPressureDomGuard() {
-        if (window.__sycmPressureDomGuard) return;
+        if (window.__sycmPressureDomGuardVersion >= 2) return;
+        window.__sycmPressureDomGuardVersion = 2;
         window.__sycmPressureDomGuard = true;
-        const startObserver = () => {
+        const refreshRecoveredView = () => {
           cleanupPressureText();
+          renderRecoveredItemRank();
+        };
+        const startObserver = () => {
+          refreshRecoveredView();
           try {
             const root = document.documentElement || document;
-            const mo = new MutationObserver(() => cleanupPressureText());
+            const mo = new MutationObserver(() => refreshRecoveredView());
             mo.observe(root, { childList: true, subtree: true, characterData: true });
           } catch (_) {}
-          try { setInterval(cleanupPressureText, 1000); } catch (_) {}
+          try { setInterval(refreshRecoveredView, 1000); } catch (_) {}
         };
         if (document.documentElement) startObserver();
         else addEventListener('DOMContentLoaded', startObserver, { once: true });
@@ -641,6 +726,7 @@ async page => {
       installBaxiaDomGuard();
       cleanupBaxia();
       cleanupPressureText();
+      renderRecoveredItemRank();
 
       if (!window.__sycmRankFallbackFetch) {
         window.__sycmRankFallbackFetch = true;

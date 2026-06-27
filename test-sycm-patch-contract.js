@@ -73,6 +73,42 @@ assert.match(
 
 assert.match(
   patchSource,
+  /renderRecoveredItemRank/,
+  'patch must render cached item-rank rows when the native table stays blank after F12 refresh'
+);
+
+assert.match(
+  patchSource,
+  /__sycm_item_rank_recovered/,
+  'patch must add a visible recovered item-rank table container'
+);
+
+assert.match(
+  patchSource,
+  /ID:/,
+  'recovered item-rank table must expose item IDs for verification'
+);
+
+assert.match(
+  patchSource,
+  /data-signature/,
+  'recovered table rendering must be idempotent and avoid mutation-observer loops'
+);
+
+assert.match(
+  patchSource,
+  /nativeText/,
+  'native row detection must exclude recovered table text so fallback stays visible'
+);
+
+assert.match(
+  patchSource,
+  /__sycmPressureDomGuardVersion/,
+  'pressure guard must use a version marker so older init scripts cannot block upgrades'
+);
+
+assert.match(
+  patchSource,
   /bixi\.alicdn\.com\/punish/,
   'patch must detect the Baxia punish payload/iframe'
 );
