@@ -2,6 +2,8 @@ async page => {
   const ctx = page.context();
 
   const ITEM_RANK_ENDPOINT = '/cc/item/live/view/top.json';
+  const ITEM_RANK_DAILY_ENDPOINT = '/cc/item/view/top.json';
+  const ITEM_RANK_ENDPOINTS = [ITEM_RANK_ENDPOINT, ITEM_RANK_DAILY_ENDPOINT];
   const MARKET_RANK_ENDPOINT = '/mc/mq/mkt/item/offline/rank.json';
   const MARKET_RANK_ALTERNATES = [
     '/mc/mq/mkt/item/offline/rank/search.json',
@@ -63,6 +65,12 @@ async page => {
   function isPunishResponse(headers, text) {
     return isPunishHeaders(headers) || isPunishBody(text);
   }
+
+  function itemRankEndpointFor(url) {
+    const source = String(url || '');
+    return ITEM_RANK_ENDPOINTS.find(endpoint => source.includes(endpoint)) || ITEM_RANK_ENDPOINT;
+  }
+
 
   function marketRankAlternateUrls(url) {
     const source = String(url || '');
@@ -163,7 +171,7 @@ async page => {
       _e: now,
       _id: 'sycm-rank-empty-fallback'
     };
-    if (endpoint === ITEM_RANK_ENDPOINT) {
+    if (ITEM_RANK_ENDPOINTS.includes(endpoint)) {
       base._d = {
         code: 0,
         message: 'ok-empty-risk-fallback',
@@ -182,11 +190,11 @@ async page => {
   }
 
   async function installItemRankRoute() {
-    const pattern = '**/cc/item/live/view/top.json**';
-    await page.unroute(pattern).catch(() => {});
-    await page.route(pattern, async route => {
+    const patterns = ['**/cc/item/live/view/top.json**', '**/cc/item/view/top.json**'];
+    const handler = async route => {
       const request = route.request();
       const originalUrl = request.url();
+      const endpoint = itemRankEndpointFor(originalUrl);
       const fulfillJson = async (body, source) => route.fulfill({
         status: 200,
         contentType: 'application/json;charset=UTF-8',
@@ -202,7 +210,7 @@ async page => {
         const originalHeaders = await responseHeaders(originalResp);
         const originalText = await originalResp.text();
         if (!isPunishResponse(originalHeaders, originalText) && hasRankRows(originalText)) {
-          await rememberPageCache(ITEM_RANK_ENDPOINT, originalUrl, originalText, 'item-route-original');
+          await rememberPageCache(endpoint, originalUrl, originalText, 'item-route-original');
           await route.fulfill({
             status: originalResp.status(),
             headers: originalHeaders,
@@ -221,28 +229,33 @@ async page => {
           const apiHeaders = await responseHeaders(apiResp);
           const apiText = await apiResp.text();
           if (!isPunishResponse(apiHeaders, apiText) && hasRankRows(apiText)) {
-            await rememberPageCache(ITEM_RANK_ENDPOINT, originalUrl, apiText, 'item-route-api-request');
+            await rememberPageCache(endpoint, originalUrl, apiText, 'item-route-api-request');
             await fulfillJson(apiText, 'api-request');
             return;
           }
         } catch (_) {}
 
-        const cached = await readPageCache(ITEM_RANK_ENDPOINT, originalUrl);
+        const cached = await readPageCache(endpoint, originalUrl);
         if (cached && hasRankRows(cached)) {
           await fulfillJson(cached, 'localStorage');
           return;
         }
 
-        await fulfillJson(makeOuterEmptyResponse(ITEM_RANK_ENDPOINT, originalUrl), 'empty-risk-fallback');
+        await fulfillJson(makeOuterEmptyResponse(endpoint, originalUrl), 'empty-risk-fallback');
       } catch (e) {
-        const cached = await readPageCache(ITEM_RANK_ENDPOINT, originalUrl);
+        const endpoint = itemRankEndpointFor(route.request().url());
+        const cached = await readPageCache(endpoint, route.request().url());
         if (cached && hasRankRows(cached)) {
           await fulfillJson(cached, 'localStorage-after-error').catch(() => {});
           return;
         }
-        await fulfillJson(makeOuterEmptyResponse(ITEM_RANK_ENDPOINT, originalUrl), 'empty-error-fallback').catch(() => {});
+        await fulfillJson(makeOuterEmptyResponse(endpoint, route.request().url()), 'empty-error-fallback').catch(() => {});
       }
-    });
+    };
+    for (const pattern of patterns) {
+      await page.unroute(pattern).catch(() => {});
+      await page.route(pattern, handler);
+    }
   }
 
   async function installMarketRankRoute() {
@@ -330,8 +343,10 @@ async page => {
   const installSycmPatch = () => {
     try {
       const ITEM_RANK_ENDPOINT = '/cc/item/live/view/top.json';
+      const ITEM_RANK_DAILY_ENDPOINT = '/cc/item/view/top.json';
+      const ITEM_RANK_ENDPOINTS = [ITEM_RANK_ENDPOINT, ITEM_RANK_DAILY_ENDPOINT];
       const ENDPOINTS = [
-        ITEM_RANK_ENDPOINT,
+        ...ITEM_RANK_ENDPOINTS,
         '/mc/mq/mkt/item/offline/rank.json',
         '/mc/mq/mkt/item/offline/rank/search.json',
         '/mc/mq/mkt/item/offline/rank/purpose.json'
@@ -446,7 +461,7 @@ async page => {
           sessionStorage.setItem('__sycm_last_rank_url|' + endpoint, String(requestUrl || ''));
           sessionStorage.setItem('__sycm_last_rank_payload', text);
           sessionStorage.setItem('__sycm_last_rank_url', String(requestUrl || ''));
-          if (endpoint === ITEM_RANK_ENDPOINT) setTimeout(renderRecoveredItemRank, 0);
+          if (ITEM_RANK_ENDPOINTS.includes(endpoint)) setTimeout(renderRecoveredItemRank, 0);
         } catch (_) {}
       }
 
@@ -505,7 +520,7 @@ async page => {
             if (existing) existing.remove();
             return;
           }
-          const cachedText = readCacheForEndpoint(ITEM_RANK_ENDPOINT, location.href);
+          const cachedText = ITEM_RANK_ENDPOINTS.map(endpoint => readCacheForEndpoint(endpoint, location.href)).find(Boolean);
           if (!cachedText) return;
           const payload = JSON.parse(cachedText);
           const rows = getRankRowsFromPayload(payload).slice(0, 20);
@@ -557,7 +572,7 @@ async page => {
         const now = Date.now();
         const dateRange = (u && u.searchParams.get('dateRange')) || new URLSearchParams(location.search || '').get('dateRange') || '';
         const dateType = (u && u.searchParams.get('dateType')) || new URLSearchParams(location.search || '').get('dateType') || '';
-        const itemShape = endpoint === ITEM_RANK_ENDPOINT;
+        const itemShape = ITEM_RANK_ENDPOINTS.includes(endpoint);
         return JSON.stringify({
           code: 0,
           message: 'ok-empty-risk-fallback',
@@ -580,7 +595,7 @@ async page => {
         if (!endpoint) return null;
         const cached = readCacheForEndpoint(endpoint, requestUrl);
         if (cached) return cached;
-        if (endpoint === MARKET_RANK_ENDPOINT || endpoint === ITEM_RANK_ENDPOINT) return makeEmptyResponse(requestUrl);
+        if (endpoint === MARKET_RANK_ENDPOINT || ITEM_RANK_ENDPOINTS.includes(endpoint)) return makeEmptyResponse(requestUrl);
         return null;
       }
 

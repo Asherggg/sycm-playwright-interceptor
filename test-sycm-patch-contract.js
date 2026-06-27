@@ -222,4 +222,22 @@ assert.match(
   'item exporter must detect pressure/try-later as risk control'
 );
 
+assert.match(
+  patchSource,
+  /\/cc\/item\/live\/view\/top\.json/,
+  'patch must install a network-level route for the item_rank live endpoint'
+);
+
+assert.match(
+  patchSource,
+  /\/cc\/item\/view\/top\.json/,
+  'patch must install a network-level route for the item_rank day/history endpoint'
+);
+
+assert.match(
+  patchSource,
+  /ITEM_RANK_ENDPOINTS/,
+  'patch must treat live and day item-rank endpoints as one item-rank family'
+);
+
 console.log('sycm patch contract ok');

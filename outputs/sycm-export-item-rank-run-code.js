@@ -1,6 +1,8 @@
 async page => {
-  const endpointPath = '/cc/item/live/view/top.json';
+  const liveEndpointPath = '/cc/item/live/view/top.json';
+  const dayEndpointPath = '/cc/item/view/top.json';
   const cfg = await page.evaluate(() => JSON.parse(sessionStorage.getItem('__sycm_export_cfg') || '{}')).catch(() => ({}));
+  const endpointPath = cfg.dateType && cfg.dateType !== 'today' ? dayEndpointPath : liveEndpointPath;
 
   function valueOf(v) {
     if (v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v, 'value')) return v.value;
@@ -97,7 +99,8 @@ async page => {
 
   async function getPageState() {
     return await page.evaluate(() => {
-      const endpointPath = '/cc/item/live/view/top.json';
+      const liveEndpointPath = '/cc/item/live/view/top.json';
+      const dayEndpointPath = '/cc/item/view/top.json';
       function tokenFromEntries() {
         try {
           const urls = performance.getEntriesByType('resource').map(e => e.name).reverse();
@@ -114,14 +117,15 @@ async page => {
       }
       function makeCandidateUrls() {
         const cfg = JSON.parse(sessionStorage.getItem('__sycm_export_cfg') || '{}');
-        const endpointPath = '/cc/item/live/view/top.json';
         const pageUrl = new URL(location.href);
         const pageParams = pageUrl.searchParams;
+        const dateType = cfg.dateType || pageParams.get('dateType') || 'today';
+        const endpointPath = dateType && dateType !== 'today' ? dayEndpointPath : liveEndpointPath;
         const token = cfg.token || tokenFromEntries();
         const q = new URLSearchParams();
         const set = (name, value, fallback = '') => q.set(name, String(value ?? fallback));
         set('dateRange', cfg.dateRange || pageParams.get('dateRange') || '');
-        set('dateType', cfg.dateType || pageParams.get('dateType') || 'today');
+        set('dateType', dateType);
         set('pageSize', cfg.pageSize || 10);
         set('page', cfg.page || 1);
         set('order', cfg.order || 'desc');
@@ -147,9 +151,10 @@ async page => {
         ua: navigator.userAgent,
         riskVisible: riskWords.some(x => bodyText.includes(x) || html.includes(x)),
         candidateUrls: makeCandidateUrls(),
+        endpointPath,
         lastPayload: sessionStorage.getItem('__sycm_last_rank_payload|' + endpointPath) || sessionStorage.getItem('__sycm_last_rank_payload') || '',
         lastUrl: sessionStorage.getItem('__sycm_last_rank_url|' + endpointPath) || sessionStorage.getItem('__sycm_last_rank_url') || '',
-        cacheKeys: Object.keys(localStorage).filter(k => k.includes('/cc/item/live/view/top.json')).sort().slice(-50).map(k => ({ key: k, raw: localStorage.getItem(k) }))
+        cacheKeys: Object.keys(localStorage).filter(k => k.includes(endpointPath)).sort().slice(-50).map(k => ({ key: k, raw: localStorage.getItem(k) }))
       };
     });
   }
@@ -232,8 +237,9 @@ async page => {
         seen.add(text);
         const idMatch = text.match(/(?:ID[:：]?\s*)?(\d{8,})/);
         const metricCount = (text.match(/支付|访客|加购|转化|金额|件数|¥|￥|\d{1,3}(,\d{3})*(\.\d+)?/g) || []).length;
-        if (!idMatch && metricCount < 3) return;
-        rows.push({ itemId: idMatch ? idMatch[1] : '', title: text.slice(0, 160), metricsText: text });
+        if (!idMatch || metricCount < 2) return;
+        if (/^\d+$/.test(text.replace(/\s+/g, ''))) return;
+        rows.push({ itemId: idMatch[1], title: text.slice(0, 160), metricsText: text });
       };
       for (const sel of selectors) {
         document.querySelectorAll(sel).forEach(el => pushText(el.innerText || el.textContent || ''));
