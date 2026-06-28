@@ -101,6 +101,11 @@ async page => {
     return await page.evaluate(() => {
       const liveEndpointPath = '/cc/item/live/view/top.json';
       const dayEndpointPath = '/cc/item/view/top.json';
+      const cfg = JSON.parse(sessionStorage.getItem('__sycm_export_cfg') || '{}');
+      const pageUrl = new URL(location.href);
+      const pageParams = pageUrl.searchParams;
+      const dateType = cfg.dateType || pageParams.get('dateType') || 'today';
+      const endpointPath = dateType && dateType !== 'today' ? dayEndpointPath : liveEndpointPath;
       function tokenFromEntries() {
         try {
           const urls = performance.getEntriesByType('resource').map(e => e.name).reverse();
@@ -116,11 +121,6 @@ async page => {
         return '';
       }
       function makeCandidateUrls() {
-        const cfg = JSON.parse(sessionStorage.getItem('__sycm_export_cfg') || '{}');
-        const pageUrl = new URL(location.href);
-        const pageParams = pageUrl.searchParams;
-        const dateType = cfg.dateType || pageParams.get('dateType') || 'today';
-        const endpointPath = dateType && dateType !== 'today' ? dayEndpointPath : liveEndpointPath;
         const token = cfg.token || tokenFromEntries();
         const q = new URLSearchParams();
         const set = (name, value, fallback = '') => q.set(name, String(value ?? fallback));

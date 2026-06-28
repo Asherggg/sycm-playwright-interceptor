@@ -9,6 +9,11 @@ async page => {
     '/mc/mq/mkt/item/offline/rank/search.json',
     '/mc/mq/mkt/item/offline/rank/purpose.json'
   ];
+  const ROUTE_FALLBACK_FLAG = '__sycm_enable_route_fallback';
+  const RECOVERED_VIEW_FLAG = '__sycm_enable_recovered_view';
+  const allowRouteFallback = await page.evaluate(flag => {
+    try { return sessionStorage.getItem(flag) === '1'; } catch (_) { return false; }
+  }, ROUTE_FALLBACK_FLAG).catch(() => false);
 
   function parseJson(text) {
     try { return JSON.parse(text); } catch (_) { return null; }
@@ -258,6 +263,17 @@ async page => {
     }
   }
 
+  async function clearRankRoutes() {
+    const patterns = [
+      '**/cc/item/live/view/top.json**',
+      '**/cc/item/view/top.json**',
+      '**/mc/mq/mkt/item/offline/rank.json**'
+    ];
+    for (const pattern of patterns) {
+      await page.unroute(pattern).catch(() => {});
+    }
+  }
+
   async function installMarketRankRoute() {
     const pattern = '**/mc/mq/mkt/item/offline/rank.json**';
     await page.unroute(pattern).catch(() => {});
@@ -337,8 +353,11 @@ async page => {
     });
   }
 
-  await installMarketRankRoute();
-  await installItemRankRoute();
+  await clearRankRoutes();
+  if (allowRouteFallback) {
+    await installMarketRankRoute();
+    await installItemRankRoute();
+  }
 
   const installSycmPatch = () => {
     try {
@@ -447,6 +466,77 @@ async page => {
         return '__sycm_interceptor_cache|' + endpoint + '|' + (u ? (u.pathname + '?' + u.searchParams.toString()) : String(requestUrl || ''));
       }
 
+      function routeFallbackEnabled() {
+        try { return sessionStorage.getItem('__sycm_enable_route_fallback') === '1'; } catch (_) { return false; }
+      }
+
+      function recoveredViewEnabled() {
+        try {
+          return sessionStorage.getItem('__sycm_enable_recovered_view') === '1' ||
+            sessionStorage.getItem('__sycm_auto_recover_item_rank') === '1' ||
+            routeFallbackEnabled();
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function isRecoveredItemRankNode(node) {
+        try {
+          return !!node && node.nodeType === 1 && (
+            node.id === '__sycm_item_rank_recovered' ||
+            (node.getAttribute && node.getAttribute('data-sycm-f12-fallback') === 'item-rank')
+          );
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function cleanupRecoveredItemRank() {
+        try {
+          if (recoveredViewEnabled() || !document.querySelectorAll) return;
+          document.querySelectorAll('#__sycm_item_rank_recovered,[data-sycm-f12-fallback="item-rank"]').forEach(el => {
+            try { el.remove(); } catch (_) { try { el.style.display = 'none'; } catch (__) {} }
+          });
+        } catch (_) {}
+      }
+
+      function installRecoveredViewGuard() {
+        if (window.__sycmRecoveredViewGuardVersion >= 1) return;
+        window.__sycmRecoveredViewGuardVersion = 1;
+
+        const blockRecoveredNode = node => {
+          if (isRecoveredItemRankNode(node) && !recoveredViewEnabled()) {
+            setTimeout(cleanupRecoveredItemRank, 0);
+            return true;
+          }
+          return false;
+        };
+
+        const nativeAppendChild = Node.prototype.appendChild;
+        Node.prototype.appendChild = function(node) {
+          if (blockRecoveredNode(node)) return node;
+          return nativeAppendChild.apply(this, arguments);
+        };
+
+        const nativeInsertBefore = Node.prototype.insertBefore;
+        Node.prototype.insertBefore = function(node) {
+          if (blockRecoveredNode(node)) return node;
+          return nativeInsertBefore.apply(this, arguments);
+        };
+
+        const startObserver = () => {
+          cleanupRecoveredItemRank();
+          try {
+            const root = document.documentElement || document;
+            const mo = new MutationObserver(() => cleanupRecoveredItemRank());
+            mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['id', 'data-sycm-f12-fallback'] });
+          } catch (_) {}
+          try { setInterval(cleanupRecoveredItemRank, 250); } catch (_) {}
+        };
+        if (document.documentElement) startObserver();
+        else addEventListener('DOMContentLoaded', startObserver, { once: true });
+      }
+
       function packCache(value, source) {
         const body = JSON.stringify({ value, source, savedAt: Date.now() });
         return JSON.stringify(String(body.length) + '|' + body);
@@ -511,6 +601,10 @@ async page => {
           if (!location.pathname.includes('/cc/item_rank')) return;
           if (!document.body) return;
           const existing = document.getElementById('__sycm_item_rank_recovered');
+          if (!recoveredViewEnabled()) {
+            cleanupRecoveredItemRank();
+            return;
+          }
           const pageText = document.body.innerText || '';
           const recoveredText = existing ? (existing.innerText || existing.textContent || '') : '';
           const nativeText = recoveredText ? pageText.replace(recoveredText, '') : pageText;
@@ -737,16 +831,55 @@ async page => {
       try { Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible', configurable: true }); } catch (_) {}
       try { document.hasFocus = new Proxy(document.hasFocus, { apply: () => true }); } catch (_) {}
 
+      installRecoveredViewGuard();
+      cleanupRecoveredItemRank();
       installPressureDomGuard();
       installBaxiaDomGuard();
       cleanupBaxia();
       cleanupPressureText();
       renderRecoveredItemRank();
 
-      if (!window.__sycmRankFallbackFetch) {
+      function cleanFetchFromRealm() {
+        try {
+          try {
+            if (window.__sycmCleanFetchWorker && window.__sycmCleanFetchWorker.terminate) {
+              window.__sycmCleanFetchWorker.terminate();
+            }
+          } catch (_) {}
+          window.__sycmCleanFetchWorker = null;
+          window.__sycmCleanFetchCallbacks = {};
+
+          let frame = window.__sycmCleanFetchFrame;
+          if (!frame || !frame.contentWindow || !document.documentElement.contains(frame)) {
+            frame = document.createElement('iframe');
+            frame.setAttribute('data-sycm-clean-realm', '1');
+            frame.src = 'about:blank';
+            frame.style.cssText = 'display:none!important;width:0!important;height:0!important;border:0!important;position:absolute!important;left:-99999px!important;top:-99999px!important;';
+            (document.documentElement || document.body || document).appendChild(frame);
+            window.__sycmCleanFetchFrame = frame;
+          }
+          const cleanWindow = frame.contentWindow;
+          const cleanFetch = cleanWindow && cleanWindow.fetch;
+          if (!cleanFetch) return { fetch: null, Response: null, XMLHttpRequest: null };
+          const realmFetch = function(input, init) {
+            const requestUrl = typeof input === 'string' ? input : (input && input.url) || '';
+            const nextInput = requestUrl ? new URL(requestUrl, location.href).href : input;
+            return cleanFetch.call(cleanWindow, nextInput, init);
+          };
+          return { fetch: realmFetch, Response: cleanWindow.Response, XMLHttpRequest: cleanWindow.XMLHttpRequest };
+        } catch (_) {
+          return { fetch: null, Response: null, XMLHttpRequest: null };
+        }
+      }
+
+      const hadPriorFetchHook = !!window.__sycmRankFallbackFetch || !!window.__sycmRankFallbackFetchVersion;
+      const shouldInstallFetchHook = routeFallbackEnabled() || hadPriorFetchHook;
+      const cleanRealm = shouldInstallFetchHook ? cleanFetchFromRealm() : { fetch: window.fetch, Response: window.Response, XMLHttpRequest: window.XMLHttpRequest };
+      const NativeResponse = cleanRealm.Response || window.Response;
+      const nativeFetch = cleanRealm.fetch || window.fetch;
+      if (shouldInstallFetchHook) {
         window.__sycmRankFallbackFetch = true;
-        const NativeResponse = window.Response;
-        const nativeFetch = window.fetch;
+        window.__sycmRankFallbackFetchVersion = 4;
         window.fetch = async function(input, init) {
           const requestUrl = typeof input === 'string' ? input : (input && input.url) || '';
           const endpoint = endpointFor(requestUrl);
@@ -755,7 +888,7 @@ async page => {
             try {
               const text = await resp.clone().text();
               if (!isPunishText(text) && hasUsablePayloadText(text)) rememberCache(endpoint, requestUrl, text, 'fetch');
-              if (isPunishText(text)) {
+              if (isPunishText(text) && routeFallbackEnabled()) {
                 cleanupBaxia();
                 const fallback = fallbackFor(requestUrl);
                 if (fallback) return new NativeResponse(fallback, { status: 200, statusText: 'OK', headers: { 'content-type': 'application/json;charset=UTF-8' } });
@@ -765,9 +898,9 @@ async page => {
           return resp;
         };
       }
-
-      if (!window.__sycmRankFallbackXHR) {
+      if (window.__sycmRankFallbackXHRVersion !== 4) {
         window.__sycmRankFallbackXHR = true;
+        window.__sycmRankFallbackXHRVersion = 4;
         const XHR = window.XMLHttpRequest;
         const open = XHR.prototype.open;
         const send = XHR.prototype.send;
@@ -779,7 +912,7 @@ async page => {
                 if (this.readyState === 4 && this.responseText) {
                   const endpoint = endpointFor(this.__sycm_url);
                   if (!isPunishText(this.responseText) && hasUsablePayloadText(this.responseText)) rememberCache(endpoint, this.__sycm_url, this.responseText, 'xhr');
-                  if (isPunishText(this.responseText)) {
+                  if (isPunishText(this.responseText) && routeFallbackEnabled()) {
                     cleanupBaxia();
                     const fallback = fallbackFor(this.__sycm_url);
                     if (fallback) {
@@ -807,5 +940,5 @@ async page => {
     await client.send('Debugger.setSkipAllPauses', { skip: true }).catch(() => {});
   } catch (_) {}
 
-  return { installed: true, url: page.url(), endpoints: [ITEM_RANK_ENDPOINT, MARKET_RANK_ENDPOINT], note: 'reload page to activate init script' };
+  return { installed: true, routeFallback: allowRouteFallback, url: page.url(), endpoints: [ITEM_RANK_ENDPOINT, MARKET_RANK_ENDPOINT], note: 'reload page to activate init script' };
 }

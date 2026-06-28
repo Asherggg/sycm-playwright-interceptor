@@ -105,6 +105,8 @@ if (-not $IndexCode) {
 }
 
 if (-not $SkipPatch) {
+  Write-Host '[3/5] Enabling export-only route fallback...'
+  Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.setItem('__sycm_enable_route_fallback','1'); sessionStorage.removeItem('__sycm_enable_recovered_view'); 'ok'") | Out-Null
   Write-Host '[3/5] Injecting F12-safe market-rank patch...'
   Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") | Out-Null
 }
@@ -159,6 +161,8 @@ $csvRows = @($data.rows) | Select-Object rank,itemId,title,shopTitle,sellerId,uv
 $csvRows | Export-Csv -LiteralPath $OutCsv -NoTypeInformation -Encoding UTF8
 
 $rowCount = @($data.rows).Count
+Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.removeItem('__sycm_enable_recovered_view'); 'ok'") -AllowFail | Out-Null
+Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") -AllowFail | Out-Null
 Write-Host 'Done.'
 Write-Host "source=$($data.source)"
 Write-Host "endpoint=$($data.endpoint)"

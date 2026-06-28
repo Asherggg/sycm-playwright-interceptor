@@ -44,7 +44,13 @@ assert.match(
 assert.match(
   patchSource,
   /page\.route/,
-  'patch must install a network-level route so page JS cannot show the Baxia payload first'
+  'patch must keep network-level route support for explicit export fallback'
+);
+
+assert.match(
+  patchSource,
+  /__sycm_enable_route_fallback/,
+  'network route fallback must be gated behind an explicit opt-in so normal page browsing is not fulfilled from stale cache/empty fallback'
 );
 
 assert.match(
@@ -74,13 +80,49 @@ assert.match(
 assert.match(
   patchSource,
   /renderRecoveredItemRank/,
-  'patch must render cached item-rank rows when the native table stays blank after F12 refresh'
+  'patch may still support an opt-in recovered item-rank table for diagnostics/export fallback'
 );
 
 assert.match(
   patchSource,
-  /__sycm_item_rank_recovered/,
-  'patch must add a visible recovered item-rank table container'
+  /__sycm_enable_recovered_view/,
+  'recovered item-rank DOM table must be gated behind an explicit opt-in so it cannot replace normal page rendering'
+);
+
+assert.match(
+  patchSource,
+  /__sycm_auto_recover_item_rank/,
+  'item-rank page recovery must be available without enabling network route fallback, so normal API requests are not replaced by empty responses'
+);
+
+assert.match(
+  patchSource,
+  /installRecoveredViewGuard/,
+  'patch must actively block and remove recovered item-rank DOM inserted by older already-installed observers'
+);
+
+assert.match(
+  patchSource,
+  /cleanFetchFromRealm/,
+  'patch must reinstall fetch from a clean browser realm so older fallback hooks cannot keep returning empty/stale data'
+);
+
+assert.match(
+  patchSource,
+  /data-sycm-clean-realm/,
+  'clean fetch reinstall must use a same-page iframe realm instead of a worker so normal same-origin credentials/referrer semantics are preserved'
+);
+
+assert.doesNotMatch(
+  patchSource,
+  /new Worker/,
+  'clean fetch reinstall must not replace normal page fetch with a worker fetch that can break normal ranking data loads'
+);
+
+assert.doesNotMatch(
+  patchSource,
+  /if\s*\(!window\.__sycmRankFallbackFetch\)/,
+  'fetch fallback hook must be versioned/reinstalled instead of skipped when an older hook marker already exists'
 );
 
 assert.match(
@@ -126,6 +168,12 @@ assert.match(
 );
 
 assert.match(
+  ps1Source,
+  /combinedText=.*text.*tableText|combinedText=.*tableText.*text/s,
+  'PowerShell verification must count item IDs and amounts from both body text and table container text'
+);
+
+assert.match(
   marketPs1Source,
   /OpenDevTools\s*=\s*\$true/,
   'market exporter must keep DevTools/F12 open by default'
@@ -135,6 +183,12 @@ assert.match(
   marketPs1Source,
   /sycm-export-market-rank-run-code\.js/,
   'market exporter must call its run-code implementation'
+);
+
+assert.match(
+  marketPs1Source,
+  /__sycm_enable_route_fallback/,
+  'market exporter must explicitly opt in to route fallback before injecting the shared patch'
 );
 
 assert.match(
@@ -187,6 +241,48 @@ assert.match(
 );
 
 assert.match(
+  itemPs1Source,
+  /__sycm_enable_route_fallback/,
+  'item exporter must explicitly opt in to route fallback before injecting the shared patch'
+);
+
+assert.match(
+  itemPs1Source,
+  /__sycm_auto_recover_item_rank/,
+  'item exporter must leave item-rank auto recovery enabled after export so the visible page is not blank when F12 triggers risk'
+);
+
+assert.match(
+  itemPs1Source,
+  /sessionStorage\.setItem\('__sycm_enable_recovered_view'\s*,\s*'1'\)/,
+  'item exporter must keep the legacy recovered-view flag on so stale installed guards cannot hide recovered item rows'
+);
+
+assert.doesNotMatch(
+  ps1Source,
+  /sessionStorage\.setItem\('__sycm_enable_route_fallback'\s*,\s*'1'\)/,
+  'minimal page fix must not enable route fallback because it is only checking visible page behavior'
+);
+
+assert.match(
+  ps1Source,
+  /sessionStorage\.removeItem\('__sycm_enable_route_fallback'\)/,
+  'minimal page fix must clear any stale export-only route fallback opt-in before injecting the shared patch'
+);
+
+assert.match(
+  ps1Source,
+  /__sycm_auto_recover_item_rank/,
+  'minimal page fix must allow recovered item-rank rendering while keeping network route fallback disabled'
+);
+
+assert.match(
+  ps1Source,
+  /sessionStorage\.setItem\('__sycm_enable_recovered_view'\s*,\s*'1'\)/,
+  'minimal page fix must also set the legacy recovered-view flag so already-installed old guards do not remove the recovered table'
+);
+
+assert.match(
   itemRunCodeSource,
   /api-request/,
   'item exporter must include APIRequest fallback'
@@ -202,6 +298,12 @@ assert.match(
   itemRunCodeSource,
   /endpointMatch/,
   'item exporter must not accept cross-endpoint generic sessionStorage payloads'
+);
+
+assert.match(
+  itemRunCodeSource,
+  /const endpointPath = dateType && dateType !== 'today' \? dayEndpointPath : liveEndpointPath;[\s\S]*function makeCandidateUrls/,
+  'item exporter page-state probe must define endpointPath outside makeCandidateUrls before returning it'
 );
 
 assert.match(
