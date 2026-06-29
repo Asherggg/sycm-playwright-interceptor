@@ -16,6 +16,23 @@ const marketRunCodeSource = fs.readFileSync(marketRunCodeFile, 'utf8');
 const itemPs1Source = fs.readFileSync(itemPs1File, 'utf8');
 const itemRunCodeSource = fs.readFileSync(itemRunCodeFile, 'utf8');
 
+for (const [name, source] of [
+  ['minimal fix', ps1Source],
+  ['market exporter', marketPs1Source],
+  ['item exporter', itemPs1Source]
+]) {
+  assert.doesNotMatch(
+    source,
+    /'eval',\s*"(?:sessionStorage|localStorage)[^"]*;\s*/s,
+    `${name} must wrap multi-statement eval snippets in an IIFE because playwright-cli --raw eval reports SyntaxError with exit 0 for raw statements`
+  );
+  assert.doesNotMatch(
+    source,
+    /\$setExpr\s*=\s*"(?:sessionStorage|localStorage)[^"]*;\s*'ok'"/s,
+    `${name} must wrap export-config eval snippets in an IIFE so sessionStorage is actually written`
+  );
+}
+
 for (const file of [patchFile, marketRunCodeFile, itemRunCodeFile]) {
   assert.doesNotThrow(
     () => new Function('return (' + fs.readFileSync(file, 'utf8') + ')'),
@@ -266,6 +283,12 @@ assert.match(
   'item exporter must seed real item data before reopening DevTools'
 );
 
+assert.ok(
+  itemPs1Source.indexOf("$setExpr =") >= 0 &&
+    itemPs1Source.indexOf("$setExpr =") < itemPs1Source.indexOf('[3/6] Enabling export-only route fallback'),
+  'item exporter must write __sycm_export_cfg before patching/seeding so the seed run warms the requested dateType endpoint instead of defaulting to today/live'
+);
+
 assert.match(
   itemPs1Source,
   /sycm-cli-run-code\.js/,
@@ -361,6 +384,18 @@ assert.match(
   itemRunCodeSource,
   /pressureVisible/,
   'item DOM fallback must reject pressure pages instead of exporting menu/noise rows'
+);
+
+assert.match(
+  itemRunCodeSource,
+  /riskVisible:\s*riskWords\.some\(x => bodyText\.includes\(x\)\)/,
+  'item exporter page-state risk check must use visible body text only so injected guard CSS containing punish keywords does not create a false risk-visible state'
+);
+
+assert.doesNotMatch(
+  itemRunCodeSource,
+  /riskWords\.some\(x => bodyText\.includes\(x\)\s*\|\|\s*html\.includes\(x\)\)/,
+  'item exporter must not scan full outerHTML for risk words because the patch itself injects punish/baxia strings into style guards'
 );
 
 assert.match(

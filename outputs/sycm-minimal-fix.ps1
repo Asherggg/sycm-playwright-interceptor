@@ -34,7 +34,7 @@ function Invoke-PwCli {
   $out = & playwright-cli @CliArgs 2>&1
   $code = $LASTEXITCODE
   $text = ($out | ForEach-Object { [string]$_ }) -join "`n"
-  if ($code -ne 0 -and -not $AllowFail) {
+  if (($code -ne 0 -or $text -match '(^|[\r\n])\s*(SyntaxError|ReferenceError|TypeError|Error):') -and -not $AllowFail) {
     throw "playwright-cli $($CliArgs -join ' ') failed with exit $code`n$text"
   }
   return [pscustomobject]@{ Code = $code; Output = $text }
@@ -89,7 +89,7 @@ if ($current -notmatch 'sycm\.taobao\.com') {
 }
 
 Write-Host '[4/5] Injecting precise fallback patch for item_rank and market_rank.'
-Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.removeItem('__sycm_enable_route_fallback'); localStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); 'ok'") | Out-Null
+Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "(()=>{sessionStorage.removeItem('__sycm_enable_route_fallback'); localStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); return 'ok';})()") | Out-Null
 $inject = Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$RunCode")
 Write-Host $inject.Output
 

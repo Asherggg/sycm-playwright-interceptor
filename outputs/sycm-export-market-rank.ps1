@@ -41,7 +41,7 @@ function Invoke-PwCli {
   $out = & playwright-cli @CliArgs 2>&1
   $code = $LASTEXITCODE
   $text = ($out | ForEach-Object { [string]$_ }) -join "`n"
-  if ($code -ne 0 -and -not $AllowFail) { throw "playwright-cli $($CliArgs -join ' ') failed with exit $code`n$text" }
+  if (($code -ne 0 -or $text -match '(^|[\r\n])\s*(SyntaxError|ReferenceError|TypeError|Error):') -and -not $AllowFail) { throw "playwright-cli $($CliArgs -join ' ') failed with exit $code`n$text" }
   return [pscustomobject]@{ Code = $code; Output = $text }
 }
 
@@ -106,7 +106,7 @@ if (-not $IndexCode) {
 
 if (-not $SkipPatch) {
   Write-Host '[3/5] Enabling export-only route fallback...'
-  Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.setItem('__sycm_enable_route_fallback','1'); sessionStorage.removeItem('__sycm_enable_recovered_view'); 'ok'") | Out-Null
+  Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "(()=>{sessionStorage.setItem('__sycm_enable_route_fallback','1'); sessionStorage.removeItem('__sycm_enable_recovered_view'); return 'ok';})()") | Out-Null
   Write-Host '[3/5] Injecting F12-safe market-rank patch...'
   Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") | Out-Null
 }
@@ -141,7 +141,7 @@ $cfg = [ordered]@{
 }
 $cfgJson = $cfg | ConvertTo-Json -Compress
 $cfgLiteral = $cfgJson | ConvertTo-Json -Compress
-$setExpr = "sessionStorage.setItem('__sycm_market_rank_export_cfg', $cfgLiteral); 'ok'"
+$setExpr = "(()=>{sessionStorage.setItem('__sycm_market_rank_export_cfg', $cfgLiteral); return 'ok';})()"
 Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', $setExpr) | Out-Null
 
 Write-Host '[5/5] Exporting market-rank rows in current browser context...'
@@ -161,7 +161,7 @@ $csvRows = @($data.rows) | Select-Object rank,itemId,title,shopTitle,sellerId,uv
 $csvRows | Export-Csv -LiteralPath $OutCsv -NoTypeInformation -Encoding UTF8
 
 $rowCount = @($data.rows).Count
-Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.removeItem('__sycm_enable_recovered_view'); 'ok'") -AllowFail | Out-Null
+Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "(()=>{sessionStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.removeItem('__sycm_enable_recovered_view'); return 'ok';})()") -AllowFail | Out-Null
 Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") -AllowFail | Out-Null
 Write-Host 'Done.'
 Write-Host "source=$($data.source)"

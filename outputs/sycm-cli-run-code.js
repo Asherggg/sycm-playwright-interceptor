@@ -659,8 +659,8 @@ async page => {
           box.setAttribute('data-signature', signature);
           box.setAttribute('data-sycm-f12-fallback', 'item-rank');
           box.style.cssText = 'margin:12px 0;padding:12px;border:1px solid #d7e3ff;border-radius:8px;background:#f7faff;color:#1f2937;font-size:12px;line-height:1.5;overflow:auto;';
-          const header = '<div style="font-weight:600;margin-bottom:8px;color:#1d4ed8">F12-safe ??????????????</div>';
-          const tableHead = '<thead><tr>' + ['??','??','??ID','????','????','?????','???','????'].map(h => '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid #dbeafe;white-space:nowrap">' + h + '</th>').join('') + '</tr></thead>';
+          const header = '<div style="font-weight:600;margin-bottom:8px;color:#1d4ed8">F12-safe 商品排行恢复数据</div>';
+          const tableHead = '<thead><tr>' + ['排名','商品','商品ID','支付金额','支付件数','支付转化率','访客数','加购件数'].map(h => '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid #dbeafe;white-space:nowrap">' + h + '</th>').join('') + '</tr></thead>';
           const tableRows = rows.map((row, index) => {
             const item = row.item || {};
             const itemId = scalarValue(item.itemId) || scalarValue(row.itemId) || '';

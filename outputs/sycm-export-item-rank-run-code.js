@@ -147,7 +147,6 @@ async page => {
         return [location.origin + endpointPath + '?' + q.toString()];
       }
       const bodyText = document.body ? (document.body.innerText || '') : '';
-      const html = document.documentElement ? (document.documentElement.outerHTML || '') : '';
       const riskWords = ['压力山大', '稍后再试', '安全提示', '异常访问行为', '高频/脚本访问', '安装插件', '账号共享', '限制访问', '请规范使用', 'bixi.alicdn.com/punish', 'punish:resource:template', 'baxia', 'rgv587_flag'];
       return {
         url: location.href,
@@ -156,7 +155,7 @@ async page => {
         search: location.search,
         token: tokenFromEntries(),
         ua: navigator.userAgent,
-        riskVisible: riskWords.some(x => bodyText.includes(x) || html.includes(x)),
+        riskVisible: riskWords.some(x => bodyText.includes(x)),
         candidateUrls: makeCandidateUrls(),
         endpointPath,
         lastPayload: sessionStorage.getItem('__sycm_last_rank_payload|' + endpointPath) || sessionStorage.getItem('__sycm_last_rank_payload') || '',

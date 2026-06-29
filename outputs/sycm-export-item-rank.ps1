@@ -34,7 +34,7 @@ function Invoke-PwCli {
   $out = & playwright-cli @CliArgs 2>&1
   $code = $LASTEXITCODE
   $text = ($out | ForEach-Object { [string]$_ }) -join "`n"
-  if ($code -ne 0 -and -not $AllowFail) { throw "playwright-cli $($CliArgs -join ' ') failed with exit $code`n$text" }
+  if (($code -ne 0 -or $text -match '(^|[\r\n])\s*(SyntaxError|ReferenceError|TypeError|Error):') -and -not $AllowFail) { throw "playwright-cli $($CliArgs -join ' ') failed with exit $code`n$text" }
   return [pscustomobject]@{ Code = $code; Output = $text }
 }
 
@@ -89,9 +89,25 @@ if ($current -notmatch 'sycm\.taobao\.com' -or $current -notmatch '/cc/item_rank
   Write-Host "[2/6] Current page is SYCM item_rank; using dateRange=$DateRange dateType=$DateType."
 }
 
+$cfg = [ordered]@{
+  dateRange = $DateRange
+  dateType = $DateType
+  page = $Page
+  pageSize = $PageSize
+  order = $Order
+  orderBy = $OrderBy
+  indexCode = $IndexCode
+  keyword = $Keyword
+  follow = $false
+}
+$cfgJson = $cfg | ConvertTo-Json -Compress
+$cfgLiteral = $cfgJson | ConvertTo-Json -Compress
+$setExpr = "(()=>{sessionStorage.setItem('__sycm_export_cfg', $cfgLiteral); return 'ok';})()"
+Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', $setExpr) | Out-Null
+
 if (-not $SkipPatch) {
   Write-Host '[3/6] Enabling export-only route fallback...'
-  Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.setItem('__sycm_enable_route_fallback','1'); localStorage.setItem('__sycm_enable_route_fallback','1'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); 'ok'") | Out-Null
+  Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "(()=>{sessionStorage.setItem('__sycm_enable_route_fallback','1'); localStorage.setItem('__sycm_enable_route_fallback','1'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); return 'ok';})()") | Out-Null
   Write-Host '[3/6] Injecting F12-safe item-rank patch...'
   Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") | Out-Null
 } else {
@@ -123,22 +139,6 @@ if ($OpenDevTools) {
   }
 }
 
-$cfg = [ordered]@{
-  dateRange = $DateRange
-  dateType = $DateType
-  page = $Page
-  pageSize = $PageSize
-  order = $Order
-  orderBy = $OrderBy
-  indexCode = $IndexCode
-  keyword = $Keyword
-  follow = $false
-}
-$cfgJson = $cfg | ConvertTo-Json -Compress
-$cfgLiteral = $cfgJson | ConvertTo-Json -Compress
-$setExpr = "sessionStorage.setItem('__sycm_export_cfg', $cfgLiteral); 'ok'"
-Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', $setExpr) | Out-Null
-
 Write-Host '[5/6] Exporting item-rank rows in current browser context...'
 $res = Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$RunCode")
 $rawJson = ($res.Output | Out-String).Trim()
@@ -154,7 +154,7 @@ $csvRows = @($data.rows) | Select-Object rank,itemId,title,itemNO,payAmt,payItmC
 $csvRows | Export-Csv -LiteralPath $OutCsv -NoTypeInformation -Encoding UTF8
 
 $rowCount = @($data.rows).Count
-Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.removeItem('__sycm_enable_route_fallback'); localStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); 'ok'") -AllowFail | Out-Null
+Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "(()=>{sessionStorage.removeItem('__sycm_enable_route_fallback'); localStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); return 'ok';})()") -AllowFail | Out-Null
 Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") -AllowFail | Out-Null
 if ($rowCount -le 0) { throw "No current item-rank rows exported. source=$($data.source); endpoint=$($data.endpoint)" }
 Write-Host '[6/6] Done.'
