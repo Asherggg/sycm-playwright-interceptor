@@ -12,7 +12,8 @@ async page => {
   const ROUTE_FALLBACK_FLAG = '__sycm_enable_route_fallback';
   const RECOVERED_VIEW_FLAG = '__sycm_enable_recovered_view';
   const allowRouteFallback = await page.evaluate(flag => {
-    try { return sessionStorage.getItem(flag) === '1'; } catch (_) { return false; }
+    const read = store => { try { return !!store && store.getItem(flag) === '1'; } catch (_) { return false; } };
+    return read(sessionStorage) || read(localStorage);
   }, ROUTE_FALLBACK_FLAG).catch(() => false);
 
   function parseJson(text) {
@@ -466,18 +467,45 @@ async page => {
         return '__sycm_interceptor_cache|' + endpoint + '|' + (u ? (u.pathname + '?' + u.searchParams.toString()) : String(requestUrl || ''));
       }
 
-      function routeFallbackEnabled() {
-        try { return sessionStorage.getItem('__sycm_enable_route_fallback') === '1'; } catch (_) { return false; }
+      function cacheParamMatches(key, name, value) {
+        if (value == null || value === '') return true;
+        const raw = name + '=' + String(value);
+        const enc = name + '=' + encodeURIComponent(String(value));
+        return key.includes(raw) || key.includes(enc);
       }
 
-      function recoveredViewEnabled() {
+      function cacheMatchesRequest(key, requestUrl) {
         try {
-          return sessionStorage.getItem('__sycm_enable_recovered_view') === '1' ||
-            sessionStorage.getItem('__sycm_auto_recover_item_rank') === '1' ||
-            routeFallbackEnabled();
+          const request = normalizeUrl(requestUrl);
+          const pageParams = new URLSearchParams(location.search || '');
+          for (const name of ['dateRange', 'dateType']) {
+            const value = (request && request.searchParams.get(name)) || pageParams.get(name) || '';
+            if (value && !cacheParamMatches(key, name, value)) return false;
+          }
+          for (const name of ['page', 'pageSize', 'order', 'orderBy', 'keyword', 'follow', 'cateId', 'cateLevel', 'indexCode']) {
+            const value = request && request.searchParams.get(name);
+            if (value && !cacheParamMatches(key, name, value)) return false;
+          }
+          return true;
         } catch (_) {
           return false;
         }
+      }
+
+      function sycmFlagEnabled(name) {
+        try { if (sessionStorage.getItem(name) === '1') return true; } catch (_) {}
+        try { if (localStorage.getItem(name) === '1') return true; } catch (_) {}
+        return false;
+      }
+
+      function routeFallbackEnabled() {
+        return sycmFlagEnabled('__sycm_enable_route_fallback');
+      }
+
+      function recoveredViewEnabled() {
+        return sycmFlagEnabled('__sycm_enable_recovered_view') ||
+          sycmFlagEnabled('__sycm_auto_recover_item_rank') ||
+          routeFallbackEnabled();
       }
 
       function isRecoveredItemRankNode(node) {
@@ -558,7 +586,7 @@ async page => {
       function readCacheForEndpoint(endpoint, requestUrl) {
         try {
           const keys = Object.keys(localStorage)
-            .filter(k => k.includes(endpoint))
+            .filter(k => k.includes(endpoint) && cacheMatchesRequest(k, requestUrl))
             .sort((a, b) => cacheScore(b, requestUrl) - cacheScore(a, requestUrl));
           for (const key of keys) {
             try {

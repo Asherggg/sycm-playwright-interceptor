@@ -91,7 +91,7 @@ if ($current -notmatch 'sycm\.taobao\.com' -or $current -notmatch '/cc/item_rank
 
 if (-not $SkipPatch) {
   Write-Host '[3/6] Enabling export-only route fallback...'
-  Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.setItem('__sycm_enable_route_fallback','1'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); 'ok'") | Out-Null
+  Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.setItem('__sycm_enable_route_fallback','1'); localStorage.setItem('__sycm_enable_route_fallback','1'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); 'ok'") | Out-Null
   Write-Host '[3/6] Injecting F12-safe item-rank patch...'
   Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") | Out-Null
 } else {
@@ -154,12 +154,12 @@ $csvRows = @($data.rows) | Select-Object rank,itemId,title,itemNO,payAmt,payItmC
 $csvRows | Export-Csv -LiteralPath $OutCsv -NoTypeInformation -Encoding UTF8
 
 $rowCount = @($data.rows).Count
-Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); 'ok'") -AllowFail | Out-Null
+Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "sessionStorage.removeItem('__sycm_enable_route_fallback'); localStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); 'ok'") -AllowFail | Out-Null
 Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") -AllowFail | Out-Null
+if ($rowCount -le 0) { throw "No current item-rank rows exported. source=$($data.source); endpoint=$($data.endpoint)" }
 Write-Host '[6/6] Done.'
 Write-Host "source=$($data.source)"
 Write-Host "endpoint=$($data.endpoint)"
 Write-Host "rows=$rowCount, recordCount=$($data.recordCount)"
 Write-Host "json=$OutJson"
 Write-Host "csv=$OutCsv"
-if ($rowCount -le 0) { throw 'item-rank export returned 0 rows' }

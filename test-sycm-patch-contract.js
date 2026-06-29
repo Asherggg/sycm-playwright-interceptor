@@ -53,6 +53,19 @@ assert.match(
   'network route fallback must be gated behind an explicit opt-in so normal page browsing is not fulfilled from stale cache/empty fallback'
 );
 
+
+assert.match(
+  patchSource,
+  /localStorage\.getItem\(name\)/,
+  'F12 recovery flags must also read localStorage because SYCM can clear sessionStorage during reload'
+);
+
+assert.match(
+  patchSource,
+  /cacheMatchesRequest/,
+  'visible recovered rows must only use cache entries matching the current page request/date parameters'
+);
+
 assert.match(
   patchSource,
   /__sycm_interceptor_cache/,
@@ -298,6 +311,19 @@ assert.match(
   itemRunCodeSource,
   /endpointMatch/,
   'item exporter must not accept cross-endpoint generic sessionStorage payloads'
+);
+
+
+assert.match(
+  itemRunCodeSource,
+  /localStorage-skip-stale/,
+  'item exporter must reject stale localStorage rows whose date/query does not match the current export request'
+);
+
+assert.match(
+  itemPs1Source,
+  /No current item-rank rows exported/,
+  'item exporter must fail instead of writing a successful empty or stale export when all current requests are risk-blocked'
 );
 
 assert.match(

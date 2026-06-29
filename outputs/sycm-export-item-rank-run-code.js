@@ -177,18 +177,43 @@ async page => {
     return outer;
   }
 
+  function cacheParamMatches(key, name, value) {
+    if (value == null || value === '') return true;
+    const raw = name + '=' + String(value);
+    const enc = name + '=' + encodeURIComponent(String(value));
+    return key.includes(raw) || key.includes(enc);
+  }
+
+  function cacheMatchesCandidate(key, state) {
+    const url = (state && state.candidateUrls && state.candidateUrls[0]) || '';
+    try {
+      const u = new URL(url);
+      for (const name of ['dateRange', 'dateType']) {
+        const value = u.searchParams.get(name) || '';
+        if (value && !cacheParamMatches(key, name, value)) return false;
+      }
+      for (const name of ['page', 'pageSize', 'order', 'orderBy', 'keyword', 'follow', 'cateId', 'cateLevel', 'indexCode']) {
+        const value = u.searchParams.get(name);
+        if (value && !cacheParamMatches(key, name, value)) return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function cacheScore(key, state) {
     let score = key.includes('__sycm_interceptor_cache|') ? 100 : 0;
     const url = (state && state.candidateUrls && state.candidateUrls[0]) || '';
     try {
       const u = new URL(url);
       for (const [name, value] of u.searchParams.entries()) {
-        if (value && key.includes(name + '=' + value)) score += 1;
+        if (value && cacheParamMatches(key, name, value)) score += 1;
       }
     } catch (_) {}
     for (const name of ['dateRange', 'dateType', 'page', 'pageSize', 'orderBy']) {
       const value = cfg[name];
-      if (value && key.includes(name + '=' + value)) score += 2;
+      if (value && cacheParamMatches(key, name, value)) score += 2;
     }
     return score;
   }
@@ -295,6 +320,10 @@ async page => {
 
   const cacheItems = [...(state.cacheKeys || [])].sort((a, b) => cacheScore(b.key, state) - cacheScore(a.key, state));
   for (const item of cacheItems) {
+    if (!cacheMatchesCandidate(item.key, state)) {
+      attempts.push({ mode: 'localStorage-skip-stale', key: item.key, reason: 'request-mismatch' });
+      continue;
+    }
     const payload = parseCacheValue(item.raw);
     attempts.push({ mode: 'localStorage', key: item.key, rows: rowsOf(payload).length });
     if (payload && rowsOf(payload).length) return normalize(payload, 'localStorage', item.key, state, attempts);
