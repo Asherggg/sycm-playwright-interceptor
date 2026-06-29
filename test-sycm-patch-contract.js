@@ -164,6 +164,12 @@ assert.match(
 
 assert.match(
   patchSource,
+  /__sycmPressureDomGuardVersion >= 3/,
+  'pressure/security prompt guard must bump its version when risk-text cleanup semantics change'
+);
+
+assert.match(
+  patchSource,
   /bixi\.alicdn\.com\/punish/,
   'patch must detect the Baxia punish payload/iframe'
 );
@@ -233,6 +239,19 @@ assert.match(
   patchSource,
   /压力山大.*稍后再试|稍后再试.*压力山大/s,
   'patch must treat pressure/try-later text as risk control'
+);
+
+
+assert.match(
+  patchSource,
+  /安全提示.*异常访问行为.*账号共享|异常访问行为.*安全提示.*账号共享/s,
+  'patch must treat the SYCM security prompt text as risk control and remove its modal container'
+);
+
+assert.match(
+  itemRunCodeSource,
+  /安全提示.*异常访问行为.*账号共享|异常访问行为.*安全提示.*账号共享/s,
+  'item exporter must classify the security prompt as risk instead of DOM data'
 );
 
 assert.match(

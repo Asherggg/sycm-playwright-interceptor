@@ -40,7 +40,14 @@ async page => {
       s.includes('punishURL') ||
       s.includes('baxia') ||
       s.includes('压力山大') ||
-      s.includes('稍后再试');
+      s.includes('稍后再试') ||
+      s.includes('安全提示') ||
+      s.includes('异常访问行为') ||
+      s.includes('高频/脚本访问') ||
+      s.includes('安装插件') ||
+      s.includes('账号共享') ||
+      s.includes('限制访问') ||
+      s.includes('请规范使用');
   }
 
   function hasRiskHeaders(headers) {
@@ -141,7 +148,7 @@ async page => {
       }
       const bodyText = document.body ? (document.body.innerText || '') : '';
       const html = document.documentElement ? (document.documentElement.outerHTML || '') : '';
-      const riskWords = ['压力山大', '稍后再试', 'bixi.alicdn.com/punish', 'punish:resource:template', 'baxia', 'rgv587_flag'];
+      const riskWords = ['压力山大', '稍后再试', '安全提示', '异常访问行为', '高频/脚本访问', '安装插件', '账号共享', '限制访问', '请规范使用', 'bixi.alicdn.com/punish', 'punish:resource:template', 'baxia', 'rgv587_flag'];
       return {
         url: location.href,
         origin: location.origin,
@@ -248,7 +255,7 @@ async page => {
   async function extractDomFallback(state, requestUrl, attempts) {
     const dom = await page.evaluate(() => {
       const bodyText = document.body ? document.body.innerText || '' : '';
-      const pressureVisible = /压力山大|稍后再试/.test(bodyText);
+      const pressureVisible = /压力山大|稍后再试|安全提示|异常访问行为|高频\/脚本访问|安装插件|账号共享|限制访问|请规范使用/.test(bodyText);
       const selectors = [
         'table tbody tr', '[class*=ant-table-row]', '[class*=next-table-row]',
         '[class*=table-row]', '[class*=rank-table] [class*=row]'
@@ -258,7 +265,7 @@ async page => {
       const pushText = text => {
         text = String(text || '').replace(/\s+/g, ' ').trim();
         if (!text || seen.has(text)) return;
-        if (/压力山大|稍后再试|首页 营销 交易|商品排行 统计时间|阿里巴巴集团|许可证|为何手动汇总/.test(text)) return;
+        if (/压力山大|稍后再试|安全提示|异常访问行为|高频\/脚本访问|安装插件|账号共享|限制访问|请规范使用|首页 营销 交易|商品排行 统计时间|阿里巴巴集团|许可证|为何手动汇总/.test(text)) return;
         seen.add(text);
         const idMatch = text.match(/(?:ID[:：]?\s*)?(\d{8,})/);
         const metricCount = (text.match(/支付|访客|加购|转化|金额|件数|¥|￥|\d{1,3}(,\d{3})*(\.\d+)?/g) || []).length;

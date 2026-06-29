@@ -723,7 +723,7 @@ async page => {
 
       function isPressureText(text) {
         const s = String(text || '');
-        return s.includes('压力山大') || s.includes('稍后再试');
+        return ['压力山大', '稍后再试', '安全提示', '异常访问行为', '高频/脚本访问', '脚本访问', '安装插件', '账号共享', '限制访问', '请规范使用'].some(word => s.includes(word));
       }
 
       function isBaxiaNode(node) {
@@ -749,15 +749,16 @@ async page => {
             if (!isPressureText(text)) continue;
             const hasPressureChild = Array.from(el.children || []).some(child => isPressureText(child.innerText || child.textContent || ''));
             if (!hasPressureChild) {
-              try { el.remove(); } catch (_) { try { el.style.display = 'none'; } catch (_) {} }
+              const container = el.closest('[role="dialog"],[class*=dialog],[class*=Dialog],[class*=modal],[class*=Modal],[class*=popup],[class*=Popup],[class*=overlay],[class*=Overlay],[class*=mask],[class*=Mask]') || el;
+              try { container.remove(); } catch (_) { try { container.style.display = 'none'; } catch (_) {} }
             }
           }
         } catch (_) {}
       }
 
       function installPressureDomGuard() {
-        if (window.__sycmPressureDomGuardVersion >= 2) return;
-        window.__sycmPressureDomGuardVersion = 2;
+        if (window.__sycmPressureDomGuardVersion >= 3) return;
+        window.__sycmPressureDomGuardVersion = 3;
         window.__sycmPressureDomGuard = true;
         const refreshRecoveredView = () => {
           cleanupPressureText();
