@@ -4,6 +4,8 @@ async page => {
   const ITEM_RANK_ENDPOINT = '/cc/item/live/view/top.json';
   const ITEM_RANK_DAILY_ENDPOINT = '/cc/item/view/top.json';
   const ITEM_RANK_ENDPOINTS = [ITEM_RANK_ENDPOINT, ITEM_RANK_DAILY_ENDPOINT];
+  const ITEM_RANK_FOCUS_LIVE_ENDPOINT = '/cc/item/view/foucs/live.json';
+  const ITEM_RANK_FOCUS_DAILY_ENDPOINT = '/cc/item/view/foucs.json';
   const MARKET_RANK_ENDPOINT = '/mc/mq/mkt/item/offline/rank.json';
   const MARKET_RANK_ALTERNATES = [
     '/mc/mq/mkt/item/offline/rank/search.json',
@@ -23,8 +25,10 @@ async page => {
   function getRankRowsFromPayload(payload) {
     if (!payload || typeof payload !== 'object') return [];
     const candidates = [
+      payload && payload._d && payload._d.data && payload._d.data.data && payload._d.data.data.data,
       payload && payload._d && payload._d.data && payload._d.data.data,
       payload && payload._d && payload._d.data,
+      payload && payload.data && payload.data.data && payload.data.data.data,
       payload && payload.data && payload.data.data,
       payload && payload.data,
       payload && payload.list,
@@ -75,6 +79,30 @@ async page => {
   function itemRankEndpointFor(url) {
     const source = String(url || '');
     return ITEM_RANK_ENDPOINTS.find(endpoint => source.includes(endpoint)) || ITEM_RANK_ENDPOINT;
+  }
+
+  function itemRankAlternateUrls(url) {
+    const source = String(url || '');
+    if (!ITEM_RANK_ENDPOINTS.some(endpoint => source.includes(endpoint))) return [];
+    const primary = source.includes(ITEM_RANK_DAILY_ENDPOINT) ? ITEM_RANK_FOCUS_DAILY_ENDPOINT : ITEM_RANK_FOCUS_LIVE_ENDPOINT;
+    const ordered = [primary, ...[ITEM_RANK_FOCUS_LIVE_ENDPOINT, ITEM_RANK_FOCUS_DAILY_ENDPOINT].filter(path => path !== primary)];
+    return ordered.map(path => {
+      let out = source
+        .replace(ITEM_RANK_ENDPOINT, path)
+        .replace(ITEM_RANK_DAILY_ENDPOINT, path)
+        .replace(/([?&])follow=[^&]*&?/g, '$1')
+        .replace(/[?&]$/, '')
+        .replace('?&', '?');
+      if (path === ITEM_RANK_FOCUS_LIVE_ENDPOINT) {
+        out = out.includes('dateType=') ? out.replace(/dateType=[^&]*/, 'dateType=today') : out + (out.includes('?') ? '&' : '?') + 'dateType=today';
+      }
+      return out;
+    });
+  }
+
+  function pathFromUrlText(url) {
+    const m = String(url || '').match(/^https?:\/\/[^/]+([^?#]+)/);
+    return m ? m[1] : String(url || '').split('?')[0];
   }
 
 
@@ -241,6 +269,19 @@ async page => {
           }
         } catch (_) {}
 
+        for (const altUrl of itemRankAlternateUrls(originalUrl)) {
+          try {
+            const altResp = await ctx.request.get(altUrl, { headers });
+            const altHeaders = await responseHeaders(altResp);
+            const altText = await altResp.text();
+            if (!isPunishResponse(altHeaders, altText) && hasRankRows(altText)) {
+              await rememberPageCache(endpoint, originalUrl, altText, 'item-route-alternate:' + pathFromUrlText(altUrl));
+              await fulfillJson(altText, 'item-rank-alternate');
+              return;
+            }
+          } catch (_) {}
+        }
+
         const cached = await readPageCache(endpoint, originalUrl);
         if (cached && hasRankRows(cached)) {
           await fulfillJson(cached, 'localStorage');
@@ -367,6 +408,8 @@ async page => {
       const ITEM_RANK_ENDPOINTS = [ITEM_RANK_ENDPOINT, ITEM_RANK_DAILY_ENDPOINT];
       const ENDPOINTS = [
         ...ITEM_RANK_ENDPOINTS,
+        '/cc/item/view/foucs/live.json',
+        '/cc/item/view/foucs.json',
         '/mc/mq/mkt/item/offline/rank.json',
         '/mc/mq/mkt/item/offline/rank/search.json',
         '/mc/mq/mkt/item/offline/rank/purpose.json'
@@ -428,8 +471,10 @@ async page => {
       function getRankRowsFromPayload(payload) {
         if (!payload || typeof payload !== 'object') return [];
         const candidates = [
+          payload && payload._d && payload._d.data && payload._d.data.data && payload._d.data.data.data,
           payload && payload._d && payload._d.data && payload._d.data.data,
           payload && payload._d && payload._d.data,
+          payload && payload.data && payload.data.data && payload.data.data.data,
           payload && payload.data && payload.data.data,
           payload && payload.data,
           payload && payload.list,
@@ -652,8 +697,12 @@ async page => {
             return [index, scalarValue(item.itemId) || scalarValue(row.itemId) || '', scalarValue(row.payAmt), scalarValue(row.itmUv || row.uv)].join(':');
           }).join('|');
           const host = document.querySelector('.sycm-cc-item-rank-table') || document.querySelector('#item-rank .oui-card-content') || document.querySelector('#item-rank') || document.body;
-          const parent = host.parentElement || document.body;
+          const parent = host === document.body ? document.body : (host.parentElement || document.body);
           const box = existing || document.createElement('div');
+          if (existing && existing.parentElement !== parent) {
+            if (host === document.body || !host.parentElement) parent.insertBefore(existing, parent.firstChild);
+            else parent.insertBefore(existing, host.nextSibling);
+          }
           if (existing && existing.getAttribute('data-signature') === signature) return;
           box.id = '__sycm_item_rank_recovered';
           box.setAttribute('data-signature', signature);
@@ -684,7 +733,10 @@ async page => {
               '</tr>';
           }).join('');
           box.innerHTML = header + '<table style="border-collapse:collapse;width:100%;background:white">' + tableHead + '<tbody>' + tableRows + '</tbody></table>';
-          if (!existing) parent.insertBefore(box, host.nextSibling);
+          if (!existing) {
+            if (host === document.body || !host.parentElement) parent.insertBefore(box, parent.firstChild);
+            else parent.insertBefore(box, host.nextSibling);
+          }
         } catch (_) {}
       }
 

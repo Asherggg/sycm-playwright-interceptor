@@ -1,6 +1,8 @@
 async page => {
   const liveEndpointPath = '/cc/item/live/view/top.json';
   const dayEndpointPath = '/cc/item/view/top.json';
+  const focusLiveEndpointPath = '/cc/item/view/foucs/live.json';
+  const focusDayEndpointPath = '/cc/item/view/foucs.json';
   const cfg = await page.evaluate(() => JSON.parse(sessionStorage.getItem('__sycm_export_cfg') || '{}')).catch(() => ({}));
   const endpointPath = cfg.dateType && cfg.dateType !== 'today' ? dayEndpointPath : liveEndpointPath;
 
@@ -12,8 +14,10 @@ async page => {
   function rowsOf(payload) {
     if (!payload || typeof payload !== 'object') return [];
     const candidates = [
+      payload && payload._d && payload._d.data && payload._d.data.data && payload._d.data.data.data,
       payload && payload._d && payload._d.data && payload._d.data.data,
       payload && payload._d && payload._d.data,
+      payload && payload.data && payload.data.data && payload.data.data.data,
       payload && payload.data && payload.data.data,
       payload && payload.data,
       payload && payload.list,
@@ -25,8 +29,10 @@ async page => {
 
   function dataOf(payload) {
     if (!payload || typeof payload !== 'object') return {};
+    if (payload._d && payload._d.data && payload._d.data.data && !Array.isArray(payload._d.data.data)) return payload._d.data.data;
     if (payload._d && payload._d.data && !Array.isArray(payload._d.data)) return payload._d.data;
     if (payload._d && Array.isArray(payload._d.data)) return payload._d;
+    if (payload.data && payload.data.data && !Array.isArray(payload.data.data)) return payload.data.data;
     if (payload.data && !Array.isArray(payload.data)) return payload.data;
     return payload;
   }
@@ -224,6 +230,50 @@ async page => {
     return score;
   }
 
+  function itemAlternateUrls(url) {
+    const source = String(url || '');
+    const out = [];
+    const orderedPaths = endpointPath === liveEndpointPath ?
+      [focusLiveEndpointPath, focusDayEndpointPath] :
+      [focusDayEndpointPath, focusLiveEndpointPath];
+    for (const path of orderedPaths) {
+      let alt = source.replace(/\/cc\/item\/(?:live\/view\/top|view\/top)\.json/, path);
+      if (alt === source) continue;
+      alt = alt
+        .replace(/([?&])follow=[^&]*&?/g, '$1')
+        .replace(/[?&]$/, '')
+        .replace('?&', '?');
+      if (path === focusLiveEndpointPath) {
+        alt = alt.includes('dateType=') ? alt.replace(/dateType=[^&]*/, 'dateType=today') : alt + (alt.includes('?') ? '&' : '?') + 'dateType=today';
+      }
+      out.push(alt);
+    }
+    return [...new Set(out)];
+  }
+
+  function pathFromUrlText(url) {
+    const m = String(url || '').match(/^https?:\/\/[^/]+([^?#]+)/);
+    return m ? m[1] : String(url || '').split('?')[0];
+  }
+
+  async function rememberExportCache(endpoint, requestUrl, text, source) {
+    if (!parsePayload(text, {})) return;
+    await page.evaluate(({ endpoint, requestUrl, text, source }) => {
+      try {
+        const value = JSON.parse(text);
+        const body = JSON.stringify({ value, source, savedAt: Date.now() });
+        const packed = JSON.stringify(String(body.length) + '|' + body);
+        const u = new URL(requestUrl, location.href);
+        const key = '__sycm_interceptor_cache|' + endpoint + '|' + u.pathname + '?' + u.searchParams.toString();
+        localStorage.setItem(key, packed);
+        sessionStorage.setItem('__sycm_last_rank_payload|' + endpoint, text);
+        sessionStorage.setItem('__sycm_last_rank_url|' + endpoint, requestUrl);
+        sessionStorage.setItem('__sycm_last_rank_payload', text);
+        sessionStorage.setItem('__sycm_last_rank_url', requestUrl);
+      } catch (_) {}
+    }, { endpoint, requestUrl, text, source });
+  }
+
   async function fetchInPage(url) {
     return await page.evaluate(async (url) => {
       const resp = await fetch(url, {
@@ -304,7 +354,10 @@ async page => {
       const r = await fetchInPage(url);
       const payload = parsePayload(r.text, r.headers);
       attempts.push({ mode: 'page-fetch', url, status: r.status, risk: isRiskText(r.text) || hasRiskHeaders(r.headers), rows: payload ? rowsOf(payload).length : 0 });
-      if (payload) return normalize(payload, 'page-fetch', url, state, attempts);
+      if (payload) {
+        await rememberExportCache(endpointPath, url, r.text, 'item-export-page-fetch');
+        return normalize(payload, 'page-fetch', url, state, attempts);
+      }
     } catch (e) { attempts.push({ mode: 'page-fetch', url, error: e.message }); }
   }
 
@@ -313,8 +366,25 @@ async page => {
       const r = await fetchByApiRequest(url, state);
       const payload = parsePayload(r.text, r.headers);
       attempts.push({ mode: 'api-request', url, status: r.status, bxpunish: (r.headers && (r.headers.bxpunish || r.headers.Bxpunish)) || '', risk: isRiskText(r.text) || hasRiskHeaders(r.headers), rows: payload ? rowsOf(payload).length : 0 });
-      if (payload) return normalize(payload, 'api-request', url, state, attempts);
+      if (payload) {
+        await rememberExportCache(endpointPath, url, r.text, 'item-export-api-request');
+        return normalize(payload, 'api-request', url, state, attempts);
+      }
     } catch (e) { attempts.push({ mode: 'api-request', url, error: e.message }); }
+  }
+
+  for (const originalUrl of candidateUrls) {
+    for (const url of itemAlternateUrls(originalUrl)) {
+      try {
+        const r = await fetchByApiRequest(url, state);
+        const payload = parsePayload(r.text, r.headers);
+        attempts.push({ mode: 'api-request-alternate', url, cacheUrl: originalUrl, status: r.status, bxpunish: (r.headers && (r.headers.bxpunish || r.headers.Bxpunish)) || '', risk: isRiskText(r.text) || hasRiskHeaders(r.headers), rows: payload ? rowsOf(payload).length : 0 });
+        if (payload) {
+          await rememberExportCache(endpointPath, originalUrl, r.text, 'item-export-alternate:' + pathFromUrlText(url));
+          return normalize(payload, 'api-request-alternate', url, state, attempts);
+        }
+      } catch (e) { attempts.push({ mode: 'api-request-alternate', url, cacheUrl: originalUrl, error: e.message }); }
+    }
   }
 
   if (state.lastPayload) {

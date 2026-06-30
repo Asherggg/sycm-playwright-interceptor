@@ -283,9 +283,27 @@ assert.match(
   'item exporter must seed real item data before reopening DevTools'
 );
 
+assert.match(
+  itemPs1Source,
+  /function\s+Invoke-PwEval/,
+  'item exporter must wrap playwright-cli eval with a retry helper for SYCM execution-context churn during page load'
+);
+
+assert.match(
+  itemPs1Source,
+  /Cannot find context|Execution context|Protocol error/,
+  'item exporter eval retry helper must handle transient Playwright execution-context errors'
+);
+
+assert.match(
+  itemPs1Source,
+  /Invoke-PwEval\s+-Expression\s+\$setExpr/,
+  'item exporter must use the eval retry helper when writing __sycm_export_cfg'
+);
+
 assert.ok(
   itemPs1Source.indexOf("$setExpr =") >= 0 &&
-    itemPs1Source.indexOf("$setExpr =") < itemPs1Source.indexOf('[3/6] Enabling export-only route fallback'),
+    itemPs1Source.indexOf("$setExpr =") < itemPs1Source.indexOf('[3/6] Preparing item-rank F12 recovery without route fallback'),
   'item exporter must write __sycm_export_cfg before patching/seeding so the seed run warms the requested dateType endpoint instead of defaulting to today/live'
 );
 
@@ -298,7 +316,13 @@ assert.match(
 assert.match(
   itemPs1Source,
   /__sycm_enable_route_fallback/,
-  'item exporter must explicitly opt in to route fallback before injecting the shared patch'
+  'item exporter must explicitly clear route fallback before injecting the shared patch'
+);
+
+assert.doesNotMatch(
+  itemPs1Source,
+  /sessionStorage\.setItem\('__sycm_enable_route_fallback'\s*,\s*'1'\)|localStorage\.setItem\('__sycm_enable_route_fallback'\s*,\s*'1'\)/,
+  'item exporter must not enable Playwright network route fallback because that branch can hang/crash the current Edge CDP target'
 );
 
 assert.match(
@@ -353,6 +377,66 @@ assert.match(
   itemRunCodeSource,
   /endpointMatch/,
   'item exporter must not accept cross-endpoint generic sessionStorage payloads'
+);
+
+assert.match(
+  patchSource,
+  /\/cc\/item\/view\/foucs\/live\.json/,
+  'patch must know the live focus endpoint used as a non-punished source when top.json is bxpunished'
+);
+
+assert.match(
+  patchSource,
+  /\/cc\/item\/view\/foucs\.json/,
+  'patch must know the day focus endpoint used as a non-punished source when top.json is bxpunished'
+);
+
+assert.match(
+  patchSource,
+  /itemRankAlternateUrls/,
+  'item route fallback must try focus endpoints before falling back to empty rows'
+);
+
+assert.match(
+  patchSource,
+  /item-route-alternate/,
+  'item route fallback must cache successful alternate focus payloads under the requested top.json cache key'
+);
+
+assert.match(
+  patchSource,
+  /host === document\.body \? document\.body/,
+  'recovered item table must be inserted inside document.body when no native table host is available'
+);
+
+assert.match(
+  itemRunCodeSource,
+  /\/cc\/item\/view\/foucs\/live\.json/,
+  'item exporter must try the live focus endpoint when the live top endpoint is risk-blocked'
+);
+
+assert.match(
+  itemRunCodeSource,
+  /\/cc\/item\/view\/foucs\.json/,
+  'item exporter must try the day focus endpoint when the day top endpoint is risk-blocked'
+);
+
+assert.match(
+  itemRunCodeSource,
+  /api-request-alternate/,
+  'item exporter must report the alternate focus endpoint attempt in its evidence chain'
+);
+
+assert.match(
+  itemRunCodeSource,
+  /rememberExportCache/,
+  'item exporter must seed the recovered-view cache from successful alternate focus payloads'
+);
+
+assert.match(
+  itemRunCodeSource,
+  /payload && payload\.data && payload\.data\.data && payload\.data\.data\.data/,
+  'item exporter must parse nested focus endpoint payloads shaped as data.data.data'
 );
 
 

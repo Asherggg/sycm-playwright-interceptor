@@ -38,6 +38,27 @@ function Invoke-PwCli {
   return [pscustomobject]@{ Code = $code; Output = $text }
 }
 
+function Invoke-PwEval {
+  param(
+    [Parameter(Mandatory=$true)][string]$Expression,
+    [int]$Retries = 3,
+    [switch]$AllowFail
+  )
+  for ($i = 1; $i -le $Retries; $i++) {
+    try {
+      return Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', $Expression) -AllowFail:$AllowFail
+    } catch {
+      $msg = $_.Exception.Message
+      $transient = $msg -match 'Cannot find context|Execution context|Protocol error|Target crashed'
+      if ($i -lt $Retries -and $transient) {
+        Start-Sleep -Seconds $i
+        continue
+      }
+      throw
+    }
+  }
+}
+
 function Get-JsonFromRaw {
   param([string]$Raw)
   $s = ($Raw | Out-String).Trim()
@@ -103,11 +124,11 @@ $cfg = [ordered]@{
 $cfgJson = $cfg | ConvertTo-Json -Compress
 $cfgLiteral = $cfgJson | ConvertTo-Json -Compress
 $setExpr = "(()=>{sessionStorage.setItem('__sycm_export_cfg', $cfgLiteral); return 'ok';})()"
-Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', $setExpr) | Out-Null
+Invoke-PwEval -Expression $setExpr | Out-Null
 
 if (-not $SkipPatch) {
-  Write-Host '[3/6] Enabling export-only route fallback...'
-  Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "(()=>{sessionStorage.setItem('__sycm_enable_route_fallback','1'); localStorage.setItem('__sycm_enable_route_fallback','1'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); return 'ok';})()") | Out-Null
+  Write-Host '[3/6] Preparing item-rank F12 recovery without route fallback...'
+  Invoke-PwEval -Expression "(()=>{sessionStorage.removeItem('__sycm_enable_route_fallback'); localStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); return 'ok';})()" | Out-Null
   Write-Host '[3/6] Injecting F12-safe item-rank patch...'
   Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") | Out-Null
 } else {
@@ -154,7 +175,7 @@ $csvRows = @($data.rows) | Select-Object rank,itemId,title,itemNO,payAmt,payItmC
 $csvRows | Export-Csv -LiteralPath $OutCsv -NoTypeInformation -Encoding UTF8
 
 $rowCount = @($data.rows).Count
-Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'eval', "(()=>{sessionStorage.removeItem('__sycm_enable_route_fallback'); localStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); return 'ok';})()") -AllowFail | Out-Null
+Invoke-PwEval -Expression "(()=>{sessionStorage.removeItem('__sycm_enable_route_fallback'); localStorage.removeItem('__sycm_enable_route_fallback'); sessionStorage.setItem('__sycm_auto_recover_item_rank','1'); localStorage.setItem('__sycm_auto_recover_item_rank','1'); sessionStorage.setItem('__sycm_enable_recovered_view','1'); localStorage.setItem('__sycm_enable_recovered_view','1'); return 'ok';})()" -AllowFail | Out-Null
 Invoke-PwCli -CliArgs @('-s', $Session, '--raw', 'run-code', "--filename=$PatchCode") -AllowFail | Out-Null
 if ($rowCount -le 0) { throw "No current item-rank rows exported. source=$($data.source); endpoint=$($data.endpoint)" }
 Write-Host '[6/6] Done.'
